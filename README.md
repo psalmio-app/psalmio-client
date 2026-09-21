@@ -1,5 +1,13 @@
 # psalmio-client
 
+> **In English:** A dependency-free Node library and command-line tool that lets a
+> church's video setup hand recordings and start times to
+> [Psalmio](https://psalmio.de), a media library for church services. Uploads are
+> chunked, resumable and never overwrite existing recordings. Docs and messages
+> are in German because that is where Psalmio's congregations are; error codes
+> and exit codes are language-neutral. The interface contract is in
+> [`docs/API.md`](docs/API.md).
+
 Aufnahmen und Startzeitpunkte nach [Psalmio](https://psalmio.de) bringen – als
 Node-Bibliothek und als Kommandozeilen-Werkzeug. Ohne Fremdabhängigkeiten.
 
@@ -118,7 +126,7 @@ automatisch die neueste. Wer damit live Gottesdienste steuert, will nicht, dass
 sich zwischen zwei Sonntagen etwas von selbst ändert.
 
 ```bash
-npm install github:OWNER/psalmio-client#v0.1.0
+npm install github:psalmio-app/psalmio-client#v0.1.0
 ```
 
 ## Entwicklung
