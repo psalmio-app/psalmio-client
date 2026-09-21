@@ -68,6 +68,9 @@ woanders als im Manifest: `--root-from /mnt/nas --root-to /Volumes/Videoteam`.
 - **Veröffentlicht wird nichts.** Die Aufnahmen liegen danach mit ihrem Ablauf
   aus ChurchTools im Editor und warten dort auf jemanden, der sie prüft.
 
+Der ganze Weg – von der Bestandsaufnahme über das Manifest bis zum Lauf – steht in
+[`docs/ARCHIV.md`](docs/ARCHIV.md). Das Hochladen ist dabei der leichte Teil.
+
 `--json` gibt das Ergebnis maschinenlesbar aus. Der Rückgabewert sagt einem
 Skript, wie es weitergeht:
 
