@@ -10,6 +10,8 @@ MBG Lemgo (eingebaut von Samuel Funk, gehärtet und getestet von Tim Fast).
   `abortMultipart`) und `uploadRecording` für den ganzen Weg samt Wiederholen,
   Fortsetzen und Ausweichen auf den einzelnen PUT
 - Neu: Kommandozeile `psalmio`
+- Neu: `runBatch` / `psalmio batch` für ganze Archive – wartet auf den Server,
+  merkt sich den Stand, überspringt Absagen
 - Ohne Fremdabhängigkeiten: `fetch` statt axios (Node ≥ 18.17)
 
 ### Für den Umstieg aus der Workflow Engine

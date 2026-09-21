@@ -124,6 +124,14 @@ function checkConnection(config, deps) {
   return call(config, 'get', '/status', undefined, deps);
 }
 
+/**
+ * Steht bei dieser Gemeinde gerade Ton- oder Bildverarbeitung an?
+ * `data: { active, running, pending, idle }` – Massen-Uploads laden erst weiter, wenn `idle`.
+ */
+function getQueue(config, deps) {
+  return call(config, 'get', '/queue', undefined, deps);
+}
+
 function getEvent(config, eventId, deps) {
   return call(config, 'get', eventPath(eventId), undefined, deps);
 }
@@ -186,6 +194,7 @@ module.exports = {
   isTemporaryOutage,
   isUnknownEndpoint,
   checkConnection,
+  getQueue,
   getEvent,
   startEvent,
   requestUpload,

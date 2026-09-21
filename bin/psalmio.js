@@ -28,6 +28,13 @@ const HILFE = `psalmio – Aufnahmen und Startzeitpunkte nach Psalmio bringen
   psalmio event <termin-id>
   psalmio start <termin-id> [--at <unix-sekunden|ISO-zeit>]
   psalmio upload <datei> --event <termin-id> [--started-at <zeit>] [--resume <upload-id>]
+  psalmio batch <manifest.tsv> [--window 22:00-06:00] [--state <datei>] [--dry-run]
+                               [--root-from /mnt/nas --root-to /Volumes/Videoteam]
+
+batch lädt ein ganzes Archiv: Manifest tabulatorgetrennt mit den Spalten „pfad" und
+„ct_id", je Termin eine Datei. Vor jeder Datei wird gewartet, bis der Server mit der
+vorigen fertig ist. Der Stand steht in <manifest>.stand.json – abbrechen (Strg+C) und
+später neu starten kostet nichts.
 
 Einrichtung (Umgebungsvariablen):
   PSALMIO_URL       https://gemeinde.psalmio.de
@@ -44,7 +51,7 @@ function argumente(argv) {
     const arg = argv[i];
     if (!arg.startsWith('--')) { positional.push(arg); continue; }
     const name = arg.slice(2);
-    if (name === 'json' || name === 'help') { flags[name] = true; continue; }
+    if (name === 'json' || name === 'help' || name === 'dry-run') { flags[name] = true; continue; }
     flags[name] = argv[i + 1];
     i += 1;
   }
@@ -120,8 +127,64 @@ async function main() {
     return ende(result, flags, (r) => `Aufnahme übernommen, Verarbeitung gestartet (Job ${r.data?.job_id ?? '?'}).`);
   }
 
+  if (befehl === 'batch' && erstes) return stapel(config, erstes, flags);
+
   console.error(HILFE);
   return 64;
+}
+
+const TEXTE = { done: 'übernommen', exists: 'lag schon vor – übersprungen', unknown: 'Termin gibt es in Psalmio nicht – übersprungen', failed: 'GESCHEITERT' };
+
+async function stapel(config, manifestPfad, flags) {
+  const manifest = client.parseManifest(fs.readFileSync(manifestPfad, 'utf8'));
+  if (manifest.error) { console.error(`Fehler: ${manifest.error}`); return 64; }
+  const fenster = client.parseWindow(flags.window);
+  if (fenster?.error) { console.error(`Fehler: ${fenster.error}`); return 64; }
+
+  // Die Pfade im Manifest stammen oft von einem anderen Rechner (Container, NAS-Freigabe)
+  const rows = manifest.rows.map((row) => ({
+    ...row,
+    filePath: flags['root-from'] && row.filePath.startsWith(flags['root-from'])
+      ? (flags['root-to'] || '') + row.filePath.slice(flags['root-from'].length)
+      : row.filePath,
+  }));
+
+  const standPfad = flags.state || `${manifestPfad}.stand.json`;
+  const state = fs.existsSync(standPfad) ? JSON.parse(fs.readFileSync(standPfad, 'utf8')) : {};
+  const erledigt = rows.filter((r) => ['done', 'exists', 'unknown'].includes(state[r.eventId]?.status)).length;
+  const fehlend = rows.filter((r) => !fs.existsSync(r.filePath));
+  const bytes = rows.reduce((summe, r) => summe + (fs.existsSync(r.filePath) ? fs.statSync(r.filePath).size : 0), 0);
+  console.error(`${rows.length} Termine im Manifest (${manifest.skipped} Zeilen ohne ct_id ausgelassen), ${erledigt} schon erledigt, ${(bytes / 1e9).toFixed(1)} GB auf der Platte gefunden.`);
+  for (const row of fehlend.slice(0, 20)) console.error(`  Datei fehlt: ${row.filePath} (Termin ${row.eventId})`);
+  if (fehlend.length > 20) console.error(`  … und ${fehlend.length - 20} weitere`);
+  if (flags['dry-run']) return fehlend.length ? 1 : 0;
+
+  const abbruch = new AbortController();
+  process.once('SIGINT', () => { console.error('\nAbbruch – der Stand wird gesichert, ein neuer Start setzt fort.'); abbruch.abort(); });
+
+  let letzte = -1;
+  const lauf = await client.runBatch(config, rows, {
+    state,
+    window: fenster,
+    signal: abbruch.signal,
+    saveState: (stand) => fs.writeFileSync(standPfad, JSON.stringify(stand, null, 2)),
+    onEvent: (e) => {
+      const zeit = new Date().toLocaleTimeString('de-DE');
+      if (e.type === 'start') { letzte = -1; console.error(`[${zeit}] ${e.index}/${e.total}  Termin ${e.eventId}${e.resumed ? ' (wird fortgesetzt)' : ''}: ${e.filePath}`); }
+      else if (e.type === 'progress' && e.percent !== letzte && e.percent % 10 === 0) { letzte = e.percent; process.stderr.write(`\r         ${e.percent} %   `); }
+      else if (e.type === 'finished') console.error(`\r[${zeit}]          ${TEXTE[e.status] || e.status}${e.status === 'failed' ? `: ${e.error}` : ''}`);
+      else if (e.type === 'retry') console.error(`\r[${zeit}]          Versuch ${e.attempt} gescheitert (${e.error}) – wird wiederholt`);
+      else if (e.type === 'server-busy') console.error(`[${zeit}] Der Server verarbeitet noch – warte …`);
+      else if (e.type === 'window-closed') console.error(`[${zeit}] Außerhalb des Zeitfensters ${flags.window} – warte …`);
+      else if (e.type === 'no-queue') console.error(`[${zeit}] Achtung: Diese Psalmio-Fassung meldet ihre Auslastung nicht – es wird ohne Bremse hochgeladen.`);
+    },
+  });
+
+  const c = lauf.counts;
+  const bericht = `übernommen ${c.done}, lag schon vor ${c.exists}, Termin unbekannt ${c.unknown}, gescheitert ${c.failed}, offen ${c.open}`;
+  if (flags.json) console.log(JSON.stringify(lauf, null, 2)); else console.log(`Fertig: ${bericht}. Stand: ${standPfad}`);
+  if (c.failed) return 1;
+  return c.open ? 3 : 0;
 }
 
 main().then((code) => { process.exitCode = code; }).catch((err) => {

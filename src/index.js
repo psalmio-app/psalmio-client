@@ -8,4 +8,5 @@ module.exports = {
   ...require('./api'),
   ...require('./put'),
   ...require('./recording'),
+  ...require('./batch'),
 };

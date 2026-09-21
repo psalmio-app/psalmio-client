@@ -44,6 +44,11 @@ nicht – nicht: Der Termin fehlt.
 ### `GET /status`
 Verbindungstest. `data: { tenant }` – die Gemeinde, zu der der Key gehört.
 
+### `GET /queue`
+`data: { active, running, pending, idle }` – wie viel Ton- und Bildverarbeitung
+bei dieser Gemeinde ansteht. Für Massen-Uploads: erst weiterladen, wenn `idle`.
+Der Server verarbeitet nacheinander; wer schneller hochlädt, stapelt nur Arbeit.
+
 ### `GET /events/{event_id}`
 `data: { event_id, title, event_date, location, event_start_timestamp, processed, audio_processing_complete }`
 

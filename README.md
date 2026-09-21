@@ -46,6 +46,28 @@ psalmio upload aufnahme.mp4 --event 7944 --started-at 2026-09-20T09:58:30+02:00
 psalmio upload aufnahme.mp4 --event 7944 --resume <upload-id>   # nach einem Abbruch
 ```
 
+### Ein ganzes Archiv: `psalmio batch`
+
+```bash
+psalmio batch zuordnung.tsv --dry-run                 # erst nachsehen: Dateien da? wie viel?
+psalmio batch zuordnung.tsv --window 22:00-06:00      # dann laufen lassen
+```
+
+Das Manifest ist tabulatorgetrennt mit den Spalten `pfad` und `ct_id` (weitere
+stören nicht), je Termin genau eine Datei. Liegen die Dateien auf diesem Rechner
+woanders als im Manifest: `--root-from /mnt/nas --root-to /Volumes/Videoteam`.
+
+- **Der Server bestimmt das Tempo.** Vor jeder Datei wartet der Lauf, bis Psalmio
+  mit der vorigen fertig ist (`GET /queue`). Ton und Bild eines Gottesdienstes
+  brauchen dort rund eine Viertelstunde; ohne Bremse stapelten vierhundert
+  Aufnahmen Tage an Arbeit auf dem Rechner, auf dem auch die Mediathek läuft.
+- **Abbrechen kostet nichts.** Der Stand steht in `<manifest>.stand.json`; ein
+  neuer Start überspringt Erledigtes und setzt einen halben Upload fort.
+- **Absagen halten nicht auf.** „Termin gibt es in Psalmio nicht" und „da liegt
+  schon eine Aufnahme" werden notiert und übersprungen.
+- **Veröffentlicht wird nichts.** Die Aufnahmen liegen danach mit ihrem Ablauf
+  aus ChurchTools im Editor und warten dort auf jemanden, der sie prüft.
+
 `--json` gibt das Ergebnis maschinenlesbar aus. Der Rückgabewert sagt einem
 Skript, wie es weitergeht:
 
