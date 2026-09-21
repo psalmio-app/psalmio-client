@@ -1,8 +1,8 @@
 /**
  * Wohin der API-Key gehen darf.
  *
- * Übernommen aus der Workflow Engine der MBG Lemgo (Tim Fast), wo diese Regeln
- * entstanden sind.
+ * Regeln und Tests von Tim Fast, entstanden im Live-Betrieb der Workflow Engine
+ * der MBG Lemgo.
  */
 
 const test = require('node:test');

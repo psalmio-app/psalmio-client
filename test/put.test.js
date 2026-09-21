@@ -5,7 +5,7 @@
  * Anfrage. Die erste Fassung hing für immer, wenn die Verbindung nach den
  * Antwort-Kopfzeilen abriss; so etwas sieht eine Attrappe nie.
  *
- * Übernommen aus der Workflow Engine der MBG Lemgo (Tim Fast).
+ * Tests von Tim Fast, entstanden im Live-Betrieb der Workflow Engine der MBG Lemgo.
  */
 
 const test = require('node:test');

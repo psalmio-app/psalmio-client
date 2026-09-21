@@ -141,6 +141,9 @@ die Gemeinde ablesen ließe. In Produktion wird das nie gebraucht.
 
 ## Herkunft
 
-Der Kern – die Regeln, wohin der Key gehen darf, und der Upload, der in jedem
-Fall endet – stammt aus der Workflow Engine der MBG Lemgo von Tim Fast und ist
-dort im Live-Betrieb entstanden. Lizenz: [MIT](LICENSE).
+Entstanden ist der Code als Psalmio-Anbindung in der Workflow Engine der MBG
+Lemgo: Samuel Funk hat sie dort eingebaut (Aufrufe, Upload, die Regel „nichts
+wirft"), Tim Fast hat sie im Live-Betrieb gehärtet – die Regeln, wohin der
+API-Key gehen darf, der Upload, der in jedem Fall endet, die Unterscheidung der
+Antworten – und die Tests dazu geschrieben. Upload in Teilen, `uploadRecording`
+und die Kommandozeile sind hier dazugekommen. Lizenz: [MIT](LICENSE).

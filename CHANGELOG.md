@@ -2,7 +2,8 @@
 
 ## 0.1.0 – noch nicht veröffentlicht
 
-Erste Fassung, herausgelöst aus der Workflow Engine der MBG Lemgo.
+Erste Fassung, herausgelöst aus der Psalmio-Anbindung in der Workflow Engine der
+MBG Lemgo (eingebaut von Samuel Funk, gehärtet und getestet von Tim Fast).
 
 - Aufrufe der Videotechnik-Schnittstelle: Status, Termin, Start, Upload (einzelner PUT)
 - Neu: Upload in Teilen (`startMultipart`, `resumeMultipart`, `completeMultipart`,
