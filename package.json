@@ -1,0 +1,14 @@
+{
+  "name": "psalmio-client",
+  "version": "0.1.0",
+  "description": "Aufnahmen und Startzeitpunkte nach Psalmio bringen – Bibliothek und Kommandozeile für die Videotechnik-Schnittstelle",
+  "license": "MIT",
+  "main": "src/index.js",
+  "bin": { "psalmio": "bin/psalmio.js" },
+  "files": ["src", "bin", "docs", "CHANGELOG.md"],
+  "engines": { "node": ">=18.17" },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": ["psalmio", "church", "gottesdienst", "upload", "churchtools"]
+}
