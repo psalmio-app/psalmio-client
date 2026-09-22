@@ -52,28 +52,65 @@ function parseManifest(text) {
   const rows = [];
   let skipped = 0;
   const gesehen = new Set();
+  const doppelt = new Set();
   for (const zeile of zeilen.slice(1)) {
     const felder = zeile.split('\t');
     const filePath = (felder[pfadSpalte] || '').trim();
     const eventId = (felder[idSpalte] || '').trim();
     if (!filePath || !eventId) { skipped += 1; continue; }
-    if (gesehen.has(eventId)) return { error: `Termin ${eventId} steht mehrfach im Manifest – je Termin genau eine Datei.` };
+    // Alle Doppelten sammeln, nicht beim ersten aufhören: Wer ein Manifest aus
+    // einer Bestandsaufnahme bereinigt, will sie in einem Durchgang sehen.
+    if (gesehen.has(eventId)) { doppelt.add(eventId); continue; }
     gesehen.add(eventId);
     rows.push({ filePath, eventId });
+  }
+  if (doppelt.size) {
+    const liste = [...doppelt].join(', ');
+    return { error: `Je Termin genau eine Datei – mehrfach im Manifest: ${liste}. Bitte im Manifest zusammenfassen oder auswählen.` };
   }
   return { rows, skipped };
 }
 
-/** „22:00-06:00" → Prüffunktion; ein Fenster über Mitternacht ist erlaubt. */
-function parseWindow(text) {
+/**
+ * „22:00-06:00" → Prüffunktion; ein Fenster über Mitternacht ist erlaubt.
+ *
+ * Die Uhrzeit ist die der angegebenen Zeitzone, sonst die des Prozesses. Das
+ * ist keine Kleinigkeit: Server laufen gern auf UTC, und „22:00-06:00" hieße
+ * dort im Sommer 0 bis 8 Uhr deutscher Zeit – der Upload liefe in den
+ * Sonntagmorgen hinein. Die gewählte Zone steht in `zone`, damit der Aufrufer
+ * sie hinschreiben kann.
+ */
+function parseWindow(text, zone) {
   if (!text) return null;
   const treffer = /^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/.exec(String(text).trim());
   if (!treffer) return { error: `Zeitfenster nicht lesbar: ${text} (erwartet: 22:00-06:00)` };
   const von = Number(treffer[1]) * 60 + Number(treffer[2]);
   const bis = Number(treffer[3]) * 60 + Number(treffer[4]);
+
+  let minuten;
+  let benutzteZone;
+  if (zone) {
+    let formatierer;
+    try {
+      // h23: Mitternacht ist 00, nicht 24 – sonst läge sie außerhalb jedes Fensters
+      formatierer = new Intl.DateTimeFormat('en-GB', { timeZone: zone, hourCycle: 'h23', hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return { error: `Zeitzone nicht bekannt: ${zone} (erwartet: Europe/Berlin)` };
+    }
+    benutzteZone = zone;
+    minuten = (datum) => {
+      const teile = Object.fromEntries(formatierer.formatToParts(datum).map((t) => [t.type, t.value]));
+      return Number(teile.hour) * 60 + Number(teile.minute);
+    };
+  } else {
+    benutzteZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    minuten = (datum) => datum.getHours() * 60 + datum.getMinutes();
+  }
+
   return {
+    zone: benutzteZone,
     offen: (datum) => {
-      const jetzt = datum.getHours() * 60 + datum.getMinutes();
+      const jetzt = minuten(datum);
       return von <= bis ? jetzt >= von && jetzt < bis : jetzt >= von || jetzt < bis;
     },
   };
@@ -125,6 +162,22 @@ async function runBatch(config, rows, options = {}, deps = {}) {
     }
   };
 
+  /**
+   * Warten, bis beides zugleich gilt: Fenster offen und Server frei.
+   *
+   * Das Warten auf den Server dauert bei großen Dateien eine Viertelstunde,
+   * bei einer Störung auch Stunden. Wurde danach nicht noch einmal aufs
+   * Fenster geschaut, begann der nächste Upload womöglich am Sonntagmorgen
+   * mitten im Gottesdienst – genau das, was das Fenster verhindern soll.
+   */
+  const warteAufGelegenheit = async () => {
+    while (!signal?.aborted) {
+      await warteAufFenster();
+      await warteAufServer();
+      if (signal?.aborted || !options.window || options.window.offen(jetzt())) return;
+    }
+  };
+
   for (const [index, row] of rows.entries()) {
     if (signal?.aborted) break;
     const eintrag = state[row.eventId] || (state[row.eventId] = { status: 'open', attempts: 0 });
@@ -132,21 +185,33 @@ async function runBatch(config, rows, options = {}, deps = {}) {
     eintrag.filePath = row.filePath;
 
     while (!signal?.aborted) {
-      await warteAufFenster();
-      await warteAufServer();
+      await warteAufGelegenheit();
       if (signal?.aborted) break;
 
-      melden({ type: 'start', index: index + 1, total: rows.length, ...row, resumed: Boolean(eintrag.uploadId) });
+      // Fortgesetzt wird nur, wenn auch festgehalten ist, für welche Datei die
+      // Kennung gilt. Ein Stand ohne diesen Fingerabdruck stammt aus einer
+      // älteren Fassung – dann lieber von vorn als Teile zweier Dateien mischen.
+      const fortsetzbar = Boolean(eintrag.uploadId && eintrag.uploadFile);
+      melden({ type: 'start', index: index + 1, total: rows.length, ...row, resumed: fortsetzbar });
       eintrag.attempts += 1;
       const result = await uploadRecording(config, row.eventId, {
         filePath: row.filePath,
-        uploadId: eintrag.uploadId,
+        uploadId: fortsetzbar ? eintrag.uploadId : undefined,
+        resumeFile: eintrag.uploadFile,
         signal,
+        // Die Kennung steht fest, sobald der Server sie ausgestellt hat – nicht
+        // erst am Ende. Nach Stromausfall oder kill gibt es sonst nichts
+        // fortzusetzen, und die halbe Datei liegt unerreichbar im Speicher.
+        onUploadStart: ({ uploadId, file }) => {
+          eintrag.uploadId = uploadId;
+          eintrag.uploadFile = file;
+          speichern();
+        },
         onProgress: (p) => melden({ type: 'progress', ...row, ...p }),
       }, deps);
 
       if (result.ok) {
-        Object.assign(eintrag, { status: 'done', uploadId: undefined, error: undefined, jobId: result.data?.job_id, fileSize: result.data?.file_size });
+        Object.assign(eintrag, { status: 'done', uploadId: undefined, uploadFile: undefined, error: undefined, jobId: result.data?.job_id, fileSize: result.data?.file_size });
       } else if (result.aborted) {
         if (result.uploadId) eintrag.uploadId = result.uploadId;
         speichern();
@@ -155,9 +220,16 @@ async function runBatch(config, rows, options = {}, deps = {}) {
         Object.assign(eintrag, { status: 'unknown', error: result.error });
       } else if (VORHANDEN.has(result.code)) {
         Object.assign(eintrag, { status: 'exists', error: result.error });
-      } else if (result.code === 'UPLOAD_NOT_RESUMABLE') {
-        // Die gemerkte Kennung ist abgelaufen – von vorn, ohne den Versuch zu zählen
+      } else if (result.code === 'UPLOAD_NOT_RESUMABLE' || result.code === 'RESUME_FILE_MISMATCH') {
+        // Die gemerkte Kennung taugt nicht mehr – von vorn, ohne den Versuch zu zählen.
+        // Bei einer geänderten Datei liegen die alten Teile noch beim Server: Die
+        // gehören zu etwas, das es so nicht mehr gibt, also gleich verwerfen.
+        if (result.code === 'RESUME_FILE_MISMATCH') {
+          melden({ type: 'file-changed', ...row, error: result.error });
+          await api.abortMultipart(config, row.eventId, { uploadId: eintrag.uploadId }, deps);
+        }
         eintrag.uploadId = undefined;
+        eintrag.uploadFile = undefined;
         eintrag.attempts -= 1;
         speichern();
         continue;

@@ -51,6 +51,7 @@ psalmio upload aufnahme.mp4 --event 7944 --resume <upload-id>   # nach einem Abb
 ```bash
 psalmio batch zuordnung.tsv --dry-run                 # erst nachsehen: Dateien da? wie viel?
 psalmio batch zuordnung.tsv --window 22:00-06:00      # dann laufen lassen
+psalmio batch zuordnung.tsv --window 22:00-06:00 --window-tz Europe/Berlin   # auf einem Server in UTC
 ```
 
 Das Manifest ist tabulatorgetrennt mit den Spalten `pfad` und `ct_id` (weitere
@@ -62,7 +63,17 @@ woanders als im Manifest: `--root-from /mnt/nas --root-to /Volumes/Videoteam`.
   brauchen dort rund eine Viertelstunde; ohne Bremse stapelten vierhundert
   Aufnahmen Tage an Arbeit auf dem Rechner, auf dem auch die Mediathek läuft.
 - **Abbrechen kostet nichts.** Der Stand steht in `<manifest>.stand.json`; ein
-  neuer Start überspringt Erledigtes und setzt einen halben Upload fort.
+  neuer Start überspringt Erledigtes und setzt einen halben Upload fort. Die
+  Kennung steht dort, sobald der Server sie ausgestellt hat – auch ein
+  Stromausfall mitten im Upload lässt sich also fortsetzen. Zu jeder Kennung
+  gehört der Fingerabdruck der Datei (Pfad, Größe, Änderungszeit); liegt dort
+  inzwischen eine andere, wird der halbe Upload verworfen und neu begonnen,
+  statt Teile zweier Dateien zu einer Aufnahme zu verweben.
+- **Das Zeitfenster gilt auch nach dem Warten.** `--window` wird nicht nur vor
+  dem Warten auf den Server geprüft, sondern auch danach – sonst begänne ein
+  Upload nach stundenlanger Warterei womöglich mitten im Gottesdienst. Die
+  Uhrzeit ist die des Rechners, sofern `--window-tz` nichts anderes sagt; auf
+  einem Server in UTC hieße „22:00-06:00" im Sommer 0 bis 8 Uhr deutscher Zeit.
 - **Absagen halten nicht auf.** „Termin gibt es in Psalmio nicht" und „da liegt
   schon eine Aufnahme" werden notiert und übersprungen.
 - **Veröffentlicht wird nichts.** Die Aufnahmen liegen danach mit ihrem Ablauf
@@ -115,6 +126,35 @@ abbrechen.
 einzeln wiederholt, eine abgelaufene Adresse erneuert, und nach einem Abbruch
 geht es mit `uploadId` an derselben Stelle weiter. Kennt eine Psalmio-Fassung
 die Teile noch nicht, weicht der Aufruf auf den einzelnen PUT aus (bis 5 GB).
+
+### Fortsetzen gilt immer einer bestimmten Datei
+
+Die `uploadId` steht fest, sobald der Server sie ausgestellt hat – nicht erst,
+wenn der Aufruf zurückkommt. `onUploadStart` meldet sie mitsamt dem
+Fingerabdruck der Datei; wer beides sofort wegschreibt, kann auch nach einem
+Stromausfall fortsetzen:
+
+```js
+await psalmio.uploadRecording(config, '7944', {
+  filePath: '/aufnahmen/gottesdienst.mp4',
+  onUploadStart: ({ uploadId, file }) => merken({ uploadId, file }),  // file: { path, size, mtimeMs }
+});
+
+// später, nach einem Abbruch:
+const result = await psalmio.uploadRecording(config, '7944', {
+  filePath: '/aufnahmen/gottesdienst.mp4',
+  uploadId: gemerkt.uploadId,
+  resumeFile: gemerkt.file,
+});
+if (result.code === 'RESUME_FILE_MISMATCH') /* andere Datei – von vorn */;
+```
+
+Ohne `resumeFile` hat niemand etwas zu vergleichen. Liegt unter dem Pfad
+inzwischen eine andere Datei, würden Teile aus beiden zu **einer** Aufnahme
+zusammengefügt – und niemand merkte es. Mit `resumeFile` wird das Fortsetzen
+verweigert (`RESUME_FILE_MISMATCH`), und auch ein Plan, der nicht zur Datei
+passt, fällt auf (`RESUME_PLAN_MISMATCH`). `runBatch` führt den Fingerabdruck
+in seinem Stand mit und macht das von selbst.
 
 Die einzelnen Schritte gibt es auch einzeln: `checkConnection`, `getEvent`,
 `startEvent`, `requestUpload`, `uploadFile`, `completeUpload`, `startMultipart`,

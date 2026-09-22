@@ -51,6 +51,8 @@ async function mitPsalmio(optionen, run) {
 
     if (pfad.endsWith('/multipart/start')) {
       if (optionen.ohneTeile) return json(404, { detail: 'Not Found' });
+      // Ein Server, der sich verrechnet: zu wenige Teile für die Datei
+      if (optionen.falscherPlan) return json(200, { data: { ...plan(body.file_size), part_count: 1 } });
       return json(200, { data: plan(body.file_size) });
     }
     if (pfad.endsWith('/multipart/resume')) {
@@ -201,4 +203,88 @@ test('Psalmios Ablehnung beim Eröffnen kommt unverändert durch (z. B. vorhande
   } finally {
     await new Promise((r) => server.close(r));
   }
+});
+
+test('die Kennung steht fest, bevor das erste Byte fließt – sonst gibt es nach einem Stromausfall nichts fortzusetzen', async () => {
+  const { file } = musterDatei(PART * 2);
+  await mitPsalmio({}, async (config) => {
+    const ablauf = [];
+    let gemeldet = null;
+    await client.uploadRecording(config, '9', {
+      filePath: file,
+      onUploadStart: (s) => { ablauf.push('kennung'); gemeldet = s; },
+      onProgress: () => { if (ablauf.at(-1) !== 'bytes') ablauf.push('bytes'); },
+    });
+    assert.deepEqual(ablauf, ['kennung', 'bytes']);
+    assert.equal(gemeldet.uploadId, 'u1');
+    assert.equal(gemeldet.resumed, false);
+    assert.equal(gemeldet.partCount, 2);
+    assert.equal(gemeldet.file.size, PART * 2);
+    assert.ok(gemeldet.file.mtimeMs > 0);
+  });
+});
+
+test('Fortsetzen gilt der Datei: eine andere Datei wird abgelehnt, statt Teile zweier Dateien zu verweben', async () => {
+  // Der gemeine Fall: Die neue Datei ist genauso groß wie die alte. Nur die
+  // Änderungszeit verrät, dass unter dem Pfad inzwischen etwas anderes liegt.
+  const alt = musterDatei(PART * 2);
+  await mitPsalmio({}, async (config, zustand) => {
+    // Erster Lauf: bricht nach dem ersten Teil ab
+    const abbruch = new AbortController();
+    const ersterLauf = await client.uploadRecording(config, '9', {
+      filePath: alt.file,
+      onUploadStart: () => {},
+      onProgress: (p) => { if (p.part === 2) abbruch.abort(); },
+      signal: abbruch.signal,
+    });
+    assert.equal(ersterLauf.aborted, true);
+    const abdruck = { path: alt.file, size: fs.statSync(alt.file).size, mtimeMs: Math.round(fs.statSync(alt.file).mtimeMs) };
+    assert.equal(zustand.teile.size, 1);
+
+    // Unter demselben Pfad liegt jetzt etwas anderes – gleich groß, anderer Inhalt
+    fs.writeFileSync(alt.file, Buffer.alloc(PART * 2, 99));
+    fs.utimesSync(alt.file, new Date(), new Date(abdruck.mtimeMs + 60_000));
+
+    const zweiterLauf = await client.uploadRecording(config, '9', {
+      filePath: alt.file,
+      uploadId: ersterLauf.uploadId,
+      resumeFile: abdruck,
+    });
+    assert.equal(zweiterLauf.ok, false);
+    assert.equal(zweiterLauf.code, 'RESUME_FILE_MISMATCH');
+    // Nichts angefasst: kein resume, kein weiterer Teil, nichts zusammengefügt
+    assert.equal(zustand.anfragen.filter((a) => a.pfad.endsWith('/multipart/resume')).length, 0);
+    assert.equal(zustand.teile.size, 1);
+    assert.equal(zustand.abgeschlossen, null);
+  });
+});
+
+test('Fortsetzen derselben Datei: der Rest geht weiter und die Aufnahme stimmt Byte für Byte', async () => {
+  const { file, inhalt } = musterDatei(PART * 3);
+  await mitPsalmio({}, async (config, zustand) => {
+    const abbruch = new AbortController();
+    const erster = await client.uploadRecording(config, '9', {
+      filePath: file,
+      onProgress: (p) => { if (p.part === 2) abbruch.abort(); },
+      signal: abbruch.signal,
+    });
+    const stat = fs.statSync(file);
+    const zweiter = await client.uploadRecording(config, '9', {
+      filePath: file,
+      uploadId: erster.uploadId,
+      resumeFile: { path: file, size: stat.size, mtimeMs: Math.round(stat.mtimeMs) },
+    });
+    assert.equal(zweiter.ok, true);
+    assert.deepEqual(zusammen(zustand), inhalt);
+  });
+});
+
+test('ein Plan, der nicht zur Datei passt, wird abgelehnt – sonst landen Stücke falscher Größe an derselben Stelle', async () => {
+  const { file } = musterDatei(PART * 2);
+  await mitPsalmio({ falscherPlan: true }, async (config, zustand) => {
+    const result = await client.uploadRecording(config, '9', { filePath: file });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'START_PLAN_MISMATCH');
+    assert.equal(zustand.teile.size, 0);
+  });
 });

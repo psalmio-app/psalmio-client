@@ -28,13 +28,18 @@ const HILFE = `psalmio – Aufnahmen und Startzeitpunkte nach Psalmio bringen
   psalmio event <termin-id>
   psalmio start <termin-id> [--at <unix-sekunden|ISO-zeit>]
   psalmio upload <datei> --event <termin-id> [--started-at <zeit>] [--resume <upload-id>]
-  psalmio batch <manifest.tsv> [--window 22:00-06:00] [--state <datei>] [--dry-run]
+  psalmio batch <manifest.tsv> [--window 22:00-06:00] [--window-tz Europe/Berlin]
+                               [--state <datei>] [--dry-run]
                                [--root-from /mnt/nas --root-to /Volumes/Videoteam]
 
 batch lädt ein ganzes Archiv: Manifest tabulatorgetrennt mit den Spalten „pfad" und
 „ct_id", je Termin eine Datei. Vor jeder Datei wird gewartet, bis der Server mit der
 vorigen fertig ist. Der Stand steht in <manifest>.stand.json – abbrechen (Strg+C) und
 später neu starten kostet nichts.
+
+--window gilt in der Zeitzone des Rechners, sofern --window-tz nichts anderes sagt.
+Auf einem Server in UTC hieße „22:00-06:00" im Sommer 0 bis 8 Uhr deutscher Zeit –
+also mitten in den Sonntagmorgen hinein. Die benutzte Zone steht beim Start dabei.
 
 Einrichtung (Umgebungsvariablen):
   PSALMIO_URL       https://gemeinde.psalmio.de
@@ -138,7 +143,7 @@ const TEXTE = { done: 'übernommen', exists: 'lag schon vor – übersprungen', 
 async function stapel(config, manifestPfad, flags) {
   const manifest = client.parseManifest(fs.readFileSync(manifestPfad, 'utf8'));
   if (manifest.error) { console.error(`Fehler: ${manifest.error}`); return 64; }
-  const fenster = client.parseWindow(flags.window);
+  const fenster = client.parseWindow(flags.window, flags['window-tz']);
   if (fenster?.error) { console.error(`Fehler: ${fenster.error}`); return 64; }
 
   // Die Pfade im Manifest stammen oft von einem anderen Rechner (Container, NAS-Freigabe)
@@ -155,6 +160,9 @@ async function stapel(config, manifestPfad, flags) {
   const fehlend = rows.filter((r) => !fs.existsSync(r.filePath));
   const bytes = rows.reduce((summe, r) => summe + (fs.existsSync(r.filePath) ? fs.statSync(r.filePath).size : 0), 0);
   console.error(`${rows.length} Termine im Manifest (${manifest.skipped} Zeilen ohne ct_id ausgelassen), ${erledigt} schon erledigt, ${(bytes / 1e9).toFixed(1)} GB auf der Platte gefunden.`);
+  // Welche Zeitzone gilt, gehört hingeschrieben: Auf einem Server in UTC meint
+  // „22:00-06:00" etwas anderes als auf dem Rechner, an dem es jemand eintippt.
+  if (fenster) console.error(`Zeitfenster ${flags.window} in der Zone ${fenster.zone}${flags['window-tz'] ? '' : ' (Zone dieses Rechners)'}.`);
   for (const row of fehlend.slice(0, 20)) console.error(`  Datei fehlt: ${row.filePath} (Termin ${row.eventId})`);
   if (fehlend.length > 20) console.error(`  … und ${fehlend.length - 20} weitere`);
   if (flags['dry-run']) return fehlend.length ? 1 : 0;
@@ -175,7 +183,8 @@ async function stapel(config, manifestPfad, flags) {
       else if (e.type === 'finished') console.error(`\r[${zeit}]          ${TEXTE[e.status] || e.status}${e.status === 'failed' ? `: ${e.error}` : ''}`);
       else if (e.type === 'retry') console.error(`\r[${zeit}]          Versuch ${e.attempt} gescheitert (${e.error}) – wird wiederholt`);
       else if (e.type === 'server-busy') console.error(`[${zeit}] Der Server verarbeitet noch – warte …`);
-      else if (e.type === 'window-closed') console.error(`[${zeit}] Außerhalb des Zeitfensters ${flags.window} – warte …`);
+      else if (e.type === 'window-closed') console.error(`[${zeit}] Außerhalb des Zeitfensters ${flags.window} (${fenster?.zone}) – warte …`);
+      else if (e.type === 'file-changed') console.error(`\r[${zeit}]          Datei hat sich geändert – der halbe Upload wird verworfen und neu begonnen (${e.error})`);
       else if (e.type === 'no-queue') console.error(`[${zeit}] Achtung: Diese Psalmio-Fassung meldet ihre Auslastung nicht – es wird ohne Bremse hochgeladen.`);
     },
   });

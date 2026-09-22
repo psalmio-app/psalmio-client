@@ -96,8 +96,17 @@ wird einzeln wiederholt, und nach einem Abbruch geht es an derselben Stelle weit
 
 Nach einem Abbruch: `POST …/multipart/resume` mit `{ "upload_id", "file_size" }`
 → wie `start`, dazu `parts_done` (nur vollständige Teile) und frische Adressen
-für alle Teile. Aufgeben: `POST …/multipart/abort` mit `{ "upload_id" }` – sonst
-belegen die Teile Speicher.
+für alle Teile.
+
+Aufgeben: `POST …/multipart/abort` mit `{ "upload_id" }`. **Nötig ist der Aufruf
+nicht, sinnvoll schon:** Jeder Gemeinde-Bucket trägt eine Regel, die angefangene
+Uploads nach einem Tag von selbst verwirft (`AbortIncompleteMultipartUpload`,
+gesetzt beim Einrichten der Gemeinde). Ein Client, der abstürzt, hinterlässt
+also keinen Müll, der bleibt. Wer aber **weiß**, dass er einen halben Upload
+nicht mehr braucht – die Datei hat sich geändert, der Termin ist weg –, gibt ihn
+besser gleich zurück, statt einen Tag lang Speicher zu belegen. Nach einem
+Fehler, der sich wiederholen lässt, gilt das Gegenteil: Dort **nicht** abbrechen,
+sonst ist das Fortsetzen verloren.
 
 ### `recording_started_at`
 

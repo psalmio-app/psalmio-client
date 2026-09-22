@@ -13,7 +13,7 @@ const client = require('../src');
 const { tempFile, readBody } = require('./helpers');
 
 async function mitPsalmio(verhalten, run) {
-  const z = { anfragen: [], hochgeladen: [], queueAbfragen: 0 };
+  const z = { anfragen: [], hochgeladen: [], verworfen: [], queueAbfragen: 0 };
   const server = http.createServer(async (req, res) => {
     const json = (status, body) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
     const origin = `http://127.0.0.1:${server.address().port}`;
@@ -35,6 +35,10 @@ async function mitPsalmio(verhalten, run) {
       if (absage) return json(absage.status, { detail: absage.detail });
       return json(200, { data: { upload_id: `u-${id}`, part_size: 1_000_000, part_count: 1, urls: { 1: `${origin}/b/${id}?partNumber=1` } } });
     }
+    if (pfad.endsWith('/multipart/resume')) {
+      return json(200, { data: { upload_id: body.upload_id, part_size: 1_000_000, part_count: 1, parts_done: [], urls: { 1: `${origin}/b/${id}?partNumber=1` } } });
+    }
+    if (pfad.endsWith('/multipart/abort')) { z.verworfen.push(body.upload_id); return json(200, { data: { aborted: true } }); }
     if (pfad.endsWith('/multipart/complete')) { z.hochgeladen.push(id); return json(200, { data: { job_id: Number(id), file_size: body.file_size } }); }
     return json(404, { detail: 'Not Found' });
   });
@@ -58,9 +62,10 @@ test('Manifest: nimmt die Zuordnungsdatei einer Bestandsaufnahme direkt (weitere
   });
 });
 
-test('Manifest: derselbe Termin zweimal ist ein Fehler – je Termin genau eine Datei', () => {
-  const ergebnis = client.parseManifest('pfad\tct_id\n/a/teil1.mp4\t9549\n/a/teil2.mp4\t9549\n');
+test('Manifest: derselbe Termin zweimal ist ein Fehler – und alle Doppelten stehen im Text', () => {
+  const ergebnis = client.parseManifest('pfad\tct_id\n/a/teil1.mp4\t9549\n/a/teil2.mp4\t9549\n/b/1.mp4\t9550\n/b/2.mp4\t9550\n');
   assert.match(ergebnis.error, /9549/);
+  assert.match(ergebnis.error, /9550/);
 });
 
 test('Manifest: ohne die Spalten pfad und ct_id geht nichts', () => {
@@ -122,13 +127,53 @@ test('ein zweiter Lauf überspringt Erledigtes – nichts geht doppelt über die
   });
 });
 
-test('der Stand wird nach jeder Datei gesichert, nicht erst am Ende', async () => {
+test('der Stand wird gesichert, sobald die Kennung feststeht – und nach jeder Datei', async () => {
   await mitPsalmio({}, async (config) => {
-    const gesichert = [];
-    await client.runBatch(config, zeilen('1', '2'), {
-      saveState: (state) => gesichert.push(Object.values(state).filter((e) => e.status === 'done').length),
+    const staende = [];
+    const reihen = zeilen('1', '2');
+    await client.runBatch(config, reihen, {
+      saveState: (state) => staende.push(JSON.parse(JSON.stringify(state))),
     }, SCHNELL);
-    assert.deepEqual(gesichert, [1, 2]);
+
+    // Der erste gesicherte Stand kennt die Kennung – die Datei ist da noch unterwegs.
+    // Genau darauf kommt es nach einem Stromausfall an: Ohne diesen Eintrag gäbe
+    // es nichts fortzusetzen, und die halbe Datei läge unerreichbar im Speicher.
+    assert.equal(staende[0]['1'].status, 'open');
+    assert.equal(staende[0]['1'].uploadId, 'u-1');
+    assert.equal(staende[0]['1'].uploadFile.path, reihen[0].filePath);
+    assert.ok(staende[0]['1'].uploadFile.size > 0);
+    assert.ok(staende[0]['1'].uploadFile.mtimeMs > 0);
+
+    // Und nach jeder Datei steht, dass sie durch ist
+    const fertig = staende.map((stand) => Object.values(stand).filter((e) => e.status === 'done').length);
+    assert.deepEqual(fertig.at(-1), 2);
+    assert.ok(fertig.includes(1));
+  });
+});
+
+test('geänderte Datei: der halbe Upload wird verworfen, statt zwei Dateien zu einer Aufnahme zu verweben', async () => {
+  await mitPsalmio({}, async (config, z) => {
+    const [row] = zeilen('1');
+    // Stand aus einem früheren Lauf – aber unter dem Pfad liegt inzwischen etwas anderes
+    const state = { 1: { status: 'open', attempts: 0, uploadId: 'u-alt', uploadFile: { path: row.filePath, size: 999_999, mtimeMs: 1 } } };
+    const ereignisse = [];
+    const lauf = await client.runBatch(config, [row], { state, onEvent: (e) => ereignisse.push(e.type) }, SCHNELL);
+
+    assert.ok(ereignisse.includes('file-changed'));
+    assert.equal(z.anfragen.filter((pfad) => pfad.endsWith('/multipart/resume')).length, 0);
+    assert.deepEqual(z.verworfen, ['u-alt']);      // die alten Teile sind weg
+    assert.equal(lauf.state['1'].status, 'done');  // und die neue Datei ist durch
+    assert.equal(lauf.state['1'].attempts, 1);     // der verworfene Versuch zählt nicht
+  });
+});
+
+test('ein Stand ohne Fingerabdruck wird nicht fortgesetzt – lieber von vorn als vermischt', async () => {
+  await mitPsalmio({}, async (config, z) => {
+    const [row] = zeilen('1');
+    const state = { 1: { status: 'open', attempts: 0, uploadId: 'u-alt' } };
+    await client.runBatch(config, [row], { state }, SCHNELL);
+    assert.equal(z.anfragen.filter((pfad) => pfad.endsWith('/multipart/resume')).length, 0);
+    assert.equal(z.anfragen.filter((pfad) => pfad.endsWith('/multipart/start')).length, 1);
   });
 });
 
@@ -161,6 +206,31 @@ test('fehlende Datei: sofort gescheitert, ohne den Server zu fragen oder zu wart
     assert.equal(lauf.state['1'].status, 'failed');
     assert.equal(lauf.state['1'].attempts, 1);
     assert.equal(z.anfragen.filter((p) => p.includes('multipart')).length, 0);
+  });
+});
+
+test('Zeitfenster: die Uhrzeit ist die der angegebenen Zeitzone, nicht die des Servers', () => {
+  // Der Server der Videotechnik läuft auf UTC. „22:00-06:00" hieße dort im
+  // Sommer 0 bis 8 Uhr deutscher Zeit – mitten in den Sonntagmorgen hinein.
+  const berlin = client.parseWindow('22:00-06:00', 'Europe/Berlin');
+  assert.equal(berlin.zone, 'Europe/Berlin');
+  assert.equal(berlin.offen(new Date('2026-09-22T20:30:00Z')), true);   // 22:30 in Berlin
+  assert.equal(berlin.offen(new Date('2026-09-22T06:30:00Z')), false);  // 08:30 in Berlin
+  assert.equal(client.parseWindow('22:00-06:00', 'UTC').offen(new Date('2026-09-22T20:30:00Z')), false);
+  assert.equal(client.parseWindow('00:00-06:00', 'Europe/Berlin').offen(new Date('2026-09-21T22:30:00Z')), true); // 00:30 in Berlin
+  assert.match(client.parseWindow('22:00-06:00', 'Mond/Krater').error, /Zeitzone/);
+});
+
+test('nach dem Warten auf den Server wird das Zeitfenster erneut geprüft', async () => {
+  // Das Warten auf den Server dauert eine Viertelstunde oder länger. Wurde
+  // danach nicht noch einmal aufs Fenster geschaut, begann der Upload
+  // womöglich am Sonntagmorgen – genau das soll das Fenster verhindern.
+  await mitPsalmio({ beschaeftigtBis: 2 }, async (config, z) => {
+    const blicke = [];
+    const fenster = { offen: () => { blicke.push(z.queueAbfragen); return true; } };
+    await client.runBatch(config, zeilen('1'), { window: fenster }, SCHNELL);
+    assert.ok(z.queueAbfragen >= 3, 'der Server war erst nach mehreren Abfragen frei');
+    assert.equal(Math.max(...blicke), z.queueAbfragen, 'zuletzt wurde nach der Queue aufs Fenster geschaut');
   });
 });
 
