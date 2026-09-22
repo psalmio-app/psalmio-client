@@ -14,9 +14,9 @@
  *   0  erledigt
  *   1  gescheitert
  *   2  Psalmio führt diesen Termin nicht (überspringen)
- *   3  vorübergehend nicht möglich (später wiederholen); bei `upload` steht die
- *      Kennung zum Fortsetzen in der Ausgabe
- *   64 falsch aufgerufen
+ *   3  vorübergehend nicht möglich (später wiederholen); bei `upload` denselben
+ *      Befehl mit --resume
+ *   64 falsch aufgerufen (auch: unbekannte Option, fehlender Wert)
  */
 
 const fs = require('node:fs');
@@ -27,10 +27,15 @@ const HILFE = `psalmio – Aufnahmen und Startzeitpunkte nach Psalmio bringen
   psalmio status
   psalmio event <termin-id>
   psalmio start <termin-id> [--at <unix-sekunden|ISO-zeit>]
-  psalmio upload <datei> --event <termin-id> [--started-at <zeit>] [--resume <upload-id>]
+  psalmio upload <datei> --event <termin-id> [--started-at <zeit>] [--resume] [--state <datei>]
   psalmio batch <manifest.tsv> [--window 22:00-06:00] [--window-tz Europe/Berlin]
                                [--state <datei>] [--dry-run]
                                [--root-from /mnt/nas --root-to /Volumes/Videoteam]
+
+upload merkt sich Kennung und Fingerabdruck der Datei (Pfad, Größe, Änderungszeit)
+in <datei>.psalmio-upload.json (oder --state), sobald Psalmio den Upload eröffnet hat.
+Nach einem Abbruch denselben Befehl mit --resume: Es geht nur weiter, wenn unter dem
+Pfad noch dieselbe Datei liegt. Ohne --resume beginnt der Upload von vorn.
 
 batch lädt ein ganzes Archiv: Manifest tabulatorgetrennt mit den Spalten „pfad" und
 „ct_id", je Termin eine Datei. Vor jeder Datei wird gewartet, bis der Server mit der
@@ -47,20 +52,47 @@ Einrichtung (Umgebungsvariablen):
   oder --url <adresse> und --key-file <datei mit dem key>
 
   --json            Ergebnis als JSON statt als Text
+
+Optionen gehen als --name wert oder --name=wert.
 `;
 
+/** Ein Aufruf, der so nicht gemeint sein kann – Rückgabewert 64. */
+class Aufruffehler extends Error {}
+
+const SCHALTER = new Set(['json', 'help', 'dry-run', 'resume']);
+const MIT_WERT = new Set(['event', 'at', 'started-at', 'url', 'key-file', 'window', 'window-tz', 'state', 'root-from', 'root-to']);
+
+/**
+ * Optionen als --name wert oder --name=wert. Was der Parser nicht kennt, ist ein
+ * Fehler: Vorher wurde --window-tz=Europe/Berlin still als unbekannter Name
+ * abgelegt – das Zeitfenster fiel weg, und der Lauf lud mitten am Tag.
+ */
 function argumente(argv) {
   const positional = [];
   const flags = {};
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (!arg.startsWith('--')) { positional.push(arg); continue; }
-    const name = arg.slice(2);
-    if (name === 'json' || name === 'help' || name === 'dry-run') { flags[name] = true; continue; }
-    flags[name] = argv[i + 1];
-    i += 1;
+    const gleich = arg.indexOf('=');
+    const name = gleich < 0 ? arg.slice(2) : arg.slice(2, gleich);
+    if (SCHALTER.has(name)) {
+      if (gleich >= 0) throw new Aufruffehler(`--${name} nimmt keinen Wert`);
+      flags[name] = true;
+    } else if (MIT_WERT.has(name)) {
+      const wert = gleich >= 0 ? arg.slice(gleich + 1) : argv[i + 1];
+      if (gleich < 0) i += 1;
+      if (wert == null || wert === '' || (gleich < 0 && wert.startsWith('--'))) throw new Aufruffehler(`--${name} braucht einen Wert`);
+      flags[name] = wert;
+    } else {
+      throw new Aufruffehler(`Unbekannte Option: --${name}`);
+    }
   }
   return { positional, flags };
+}
+
+/** Mehr Angaben ohne Namen als der Befehl kennt? Dann ist etwas verrutscht – z. B. „--resume <upload-id>" aus einer älteren Fassung. */
+function genau(positional, anzahl) {
+  if (positional.length > anzahl) throw new Aufruffehler(`Unerwartetes Argument: ${positional[anzahl]}`);
 }
 
 /** Unix-Sekunden aus „1790000000" oder „2026-09-20T10:00:00+02:00". */
@@ -83,14 +115,14 @@ function konfiguration(flags) {
   };
 }
 
-function ende(result, flags, text) {
+function ende(result, flags, text, hinweis) {
   if (flags.json) {
     console.log(JSON.stringify(result, null, 2));
   } else if (result.ok) {
     console.log(text(result));
   } else {
     console.error(`Fehler: ${result.error}${result.code ? ` [${result.code}]` : ''}`);
-    if (result.uploadId) console.error(`Fortsetzen mit: --resume ${result.uploadId}`);
+    if (hinweis) console.error(hinweis);
   }
   if (result.ok) return 0;
   if (client.isUnknownEvent(result)) return 2;
@@ -105,37 +137,102 @@ async function main() {
   const config = konfiguration(flags);
 
   if (befehl === 'status') {
+    genau(positional, 1);
     return ende(await client.checkConnection(config), flags, (r) => `Verbunden mit Psalmio – Gemeinde: ${r.data?.tenant ?? '?'}`);
   }
   if (befehl === 'event' && erstes) {
+    genau(positional, 2);
     return ende(await client.getEvent(config, erstes), flags, (r) => JSON.stringify(r.data, null, 2));
   }
   if (befehl === 'start' && erstes) {
+    genau(positional, 2);
     const at = zeitpunkt(flags.at) ?? Math.floor(Date.now() / 1000);
     return ende(await client.startEvent(config, erstes, at), flags, (r) =>
       r.data?.already_started ? 'Der Termin lief schon – nichts geändert.' : 'Termin gestartet.');
   }
   if (befehl === 'upload' && erstes && flags.event) {
-    let letzte = -1;
-    const result = await client.uploadRecording(config, flags.event, {
-      filePath: erstes,
-      recordingStartedAt: zeitpunkt(flags['started-at']),
-      uploadId: flags.resume,
-      onProgress: (p) => {
-        if (flags.json || p.percent === letzte) return;
-        letzte = p.percent;
-        const teil = p.partCount ? ` (Teil ${p.part}/${p.partCount})` : '';
-        process.stderr.write(`\r${String(p.percent).padStart(3)} %${teil}   `);
-      },
-    });
-    if (!flags.json) process.stderr.write('\n');
-    return ende(result, flags, (r) => `Aufnahme übernommen, Verarbeitung gestartet (Job ${r.data?.job_id ?? '?'}).`);
+    genau(positional, 2);
+    return hochladen(config, erstes, flags);
   }
 
-  if (befehl === 'batch' && erstes) return stapel(config, erstes, flags);
+  if (befehl === 'batch' && erstes) {
+    genau(positional, 2);
+    return stapel(config, erstes, flags);
+  }
 
   console.error(HILFE);
   return 64;
+}
+
+/**
+ * Eine Aufnahme hochladen – und dabei festhalten, was es zum Fortsetzen braucht.
+ *
+ * Sobald Psalmio den Upload eröffnet hat, stehen Kennung und Fingerabdruck der
+ * Datei (Pfad, Größe, Änderungszeit) in <datei>.psalmio-upload.json. --resume
+ * liest beides von dort; die Kennung von Hand gibt es nicht mehr. So kann die
+ * Bibliothek prüfen, ob unter dem Pfad noch dieselbe Datei liegt – vorher ging
+ * „--resume <id>" ohne Fingerabdruck durch, und Teile zweier Dateien wurden zu
+ * einer Aufnahme.
+ */
+async function hochladen(config, datei, flags) {
+  // Zuerst alles lesen, was scheitern kann – bevor irgendetwas beim Server passiert
+  const recordingStartedAt = zeitpunkt(flags['started-at']);
+  const merkPfad = flags.state || `${datei}.psalmio-upload.json`;
+  let gemerkt = null;
+  if (fs.existsSync(merkPfad)) {
+    try {
+      gemerkt = JSON.parse(fs.readFileSync(merkPfad, 'utf8'));
+    } catch (err) {
+      console.error(`Fehler: ${merkPfad} ist nicht lesbar (${err.message}). Löschen oder mit --state woanders ablegen.`);
+      return 1;
+    }
+  }
+  const passt = gemerkt && gemerkt.eventId === flags.event && gemerkt.baseUrl === config.baseUrl;
+
+  let fortsetzen;
+  if (flags.resume) {
+    if (!gemerkt) {
+      console.error(`Fehler: Nichts zum Fortsetzen – ${merkPfad} gibt es nicht. Ohne --resume beginnt der Upload von vorn.`);
+      return 1;
+    }
+    if (!passt) {
+      console.error(`Fehler: ${merkPfad} gehört zu Termin ${gemerkt.eventId} bei ${gemerkt.baseUrl}, nicht zu Termin ${flags.event} bei ${config.baseUrl}.`);
+      return 1;
+    }
+    fortsetzen = { uploadId: gemerkt.uploadId, resumeFile: gemerkt.file };
+  } else if (passt && gemerkt.uploadId) {
+    // Ein halber Upload von früher, und jetzt beginnt es von vorn: Die alten
+    // Teile braucht niemand mehr – gleich zurückgeben statt einen Tag Speicher belegen.
+    await client.abortMultipart(config, flags.event, { uploadId: gemerkt.uploadId });
+  }
+
+  let letzte = -1;
+  const result = await client.uploadRecording(config, flags.event, {
+    filePath: datei,
+    recordingStartedAt,
+    uploadId: fortsetzen?.uploadId,
+    resumeFile: fortsetzen?.resumeFile,
+    onUploadStart: ({ uploadId, partSize, partCount, file }) => {
+      try {
+        fs.writeFileSync(merkPfad, JSON.stringify({ baseUrl: config.baseUrl, eventId: flags.event, uploadId, file, partSize, partCount }, null, 2));
+      } catch (err) {
+        throw new Error(`${merkPfad} nicht schreibbar (${err.code || err.message}) – mit --state <datei> woanders ablegen`);
+      }
+    },
+    onProgress: (p) => {
+      if (flags.json || p.percent === letzte) return;
+      letzte = p.percent;
+      const teil = p.partCount ? ` (Teil ${p.part}/${p.partCount})` : '';
+      process.stderr.write(`\r${String(p.percent).padStart(3)} %${teil}   `);
+    },
+  });
+  if (!flags.json) process.stderr.write('\n');
+
+  if (result.ok) fs.rmSync(merkPfad, { force: true });
+  let hinweis;
+  if (result.code === 'RESUME_FILE_MISMATCH') hinweis = 'Unter dem Pfad liegt eine andere Datei als beim Abbruch – ohne --resume neu hochladen.';
+  else if (!result.ok && fs.existsSync(merkPfad) && result.code !== 'RESUME_FILE_MISSING') hinweis = 'Fortsetzen: denselben Befehl mit --resume wiederholen.';
+  return ende(result, flags, (r) => `Aufnahme übernommen, Verarbeitung gestartet (Job ${r.data?.job_id ?? '?'}).`, hinweis);
 }
 
 const TEXTE = { done: 'übernommen', exists: 'lag schon vor – übersprungen', unknown: 'Termin gibt es in Psalmio nicht – übersprungen', failed: 'GESCHEITERT' };
@@ -198,5 +295,6 @@ async function stapel(config, manifestPfad, flags) {
 
 main().then((code) => { process.exitCode = code; }).catch((err) => {
   console.error(`Fehler: ${err.message}`);
-  process.exitCode = 1;
+  if (err instanceof Aufruffehler) console.error('Hilfe: psalmio --help');
+  process.exitCode = err instanceof Aufruffehler ? 64 : 1;
 });

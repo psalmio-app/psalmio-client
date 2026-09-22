@@ -98,6 +98,15 @@ Nach einem Abbruch: `POST …/multipart/resume` mit `{ "upload_id", "file_size" 
 → wie `start`, dazu `parts_done` (nur vollständige Teile) und frische Adressen
 für alle Teile.
 
+**Den Plan vom Start merkt sich Psalmio nicht.** `part_size` und `part_count`
+entstehen beim Fortsetzen aus der gesendeten `file_size` neu – nach derselben
+Regel wie beim Start, bei gleicher Größe also derselbe Plan. Eine **andere
+Datei gleicher Größe** fällt dem Server deshalb nicht auf: Er sieht nur die
+Kennung und die Größe. Wer fortsetzt, muss selbst sicherstellen, dass noch
+dieselbe Datei vorliegt – `uploadRecording` tut das über den Fingerabdruck
+(Pfad, Größe, Änderungszeit) und setzt ohne ihn gar nicht fort
+(`RESUME_FILE_MISSING`).
+
 Aufgeben: `POST …/multipart/abort` mit `{ "upload_id" }`. **Nötig ist der Aufruf
 nicht, sinnvoll schon:** Jeder Gemeinde-Bucket trägt eine Regel, die angefangene
 Uploads nach einem Tag von selbst verwirft (`AbortIncompleteMultipartUpload`,

@@ -7,16 +7,20 @@
  * Teile noch nicht, weicht der Aufruf auf den einzelnen PUT aus (bis 5 GB).
  *
  * Fortsetzen gilt immer **einer bestimmten Datei**. Wer eine `uploadId`
- * mitgibt, gibt auch `resumeFile` mit – Pfad, Größe und Änderungszeit, wie sie
- * beim Eröffnen galten. Weicht die Datei davon ab, wird das Fortsetzen
- * verweigert (`RESUME_FILE_MISMATCH`), statt Teile zweier Dateien still zu
- * einer Aufnahme zu verweben. Dasselbe gilt, wenn der Plan des Servers nicht
- * zur Datei passt (`RESUME_PLAN_MISMATCH`).
+ * mitgibt, muss auch `resumeFile` mitgeben – Pfad, Größe und Änderungszeit, wie
+ * `onUploadStart` sie beim Eröffnen gemeldet hat. Fehlt davon etwas, wird das
+ * Fortsetzen verweigert (`RESUME_FILE_MISSING`); weicht die Datei ab, ebenso
+ * (`RESUME_FILE_MISMATCH`). Beides, statt Teile zweier Dateien still zu einer
+ * Aufnahme zu verweben: Psalmio rechnet den Plan beim Fortsetzen aus der
+ * gesendeten Größe neu und bemerkt eine andere Datei gleicher Größe nicht –
+ * der Fingerabdruck ist der einzige Schutz dagegen.
  *
  * Die `uploadId` steht nicht erst am Ende fest: `onUploadStart` meldet sie,
- * sobald der Server sie ausgestellt hat. Wer sie dort wegschreibt, kann auch
- * nach einem harten Abbruch fortsetzen – das Ergebnis am Ende sieht in diesem
- * Fall ja niemand mehr.
+ * sobald der Server sie ausgestellt hat, und es geht erst weiter, wenn der
+ * Rückruf fertig ist (er darf eine Promise liefern). Wer die Kennung dort
+ * wegschreibt, kann auch nach einem harten Abbruch fortsetzen – das Ergebnis am
+ * Ende sieht in diesem Fall ja niemand mehr. Scheitert der Rückruf, endet der
+ * Upload (`UPLOAD_START_HOOK_FAILED`), bevor ein Byte fließt.
  *
  * Wie überall: nichts wirft. Das Ergebnis nennt die Stufe, auf der es endete
  * (`stage`), und – sobald es eine gibt – die `uploadId`, mit der sich der
@@ -42,9 +46,9 @@ const pause = (ms, signal) =>
  * @param {object} options
  * @param {string} options.filePath
  * @param {number} [options.recordingStartedAt]  Unix-Sekunden: wann die Aufnahme wirklich begann
- * @param {string} [options.uploadId]            einen abgebrochenen Upload fortsetzen
- * @param {{path?: string, size?: number, mtimeMs?: number}} [options.resumeFile]  Datei, für die die `uploadId` gilt
- * @param {(s: {uploadId: string, partSize: number, partCount: number, resumed: boolean, file: {path: string, size: number, mtimeMs?: number}}) => void} [options.onUploadStart]
+ * @param {string} [options.uploadId]            einen abgebrochenen Upload fortsetzen – nur zusammen mit `resumeFile`
+ * @param {{path: string, size: number, mtimeMs: number}} [options.resumeFile]  Datei, für die die `uploadId` gilt (wie von `onUploadStart` gemeldet)
+ * @param {(s: {uploadId: string, partSize: number, partCount: number, resumed: boolean, file: {path: string, size: number, mtimeMs: number}}) => void | Promise<void>} [options.onUploadStart]
  * @param {number} [options.partAttempts=4]      Versuche je Teil
  * @param {(p: {sentBytes: number, totalBytes: number, percent: number, part?: number, partCount?: number}) => void} [options.onProgress]
  * @param {AbortSignal} [options.signal]
@@ -74,6 +78,18 @@ async function uploadRecording(config, eventId, options, deps = {}) {
   if (fortsetzen) {
     // Erst die Datei, dann der Server: Passt schon der Fingerabdruck nicht,
     // braucht niemand eine Adresse für Teile, die nicht zusammengehören.
+    // Ohne Fingerabdruck gibt es nichts zu vergleichen – dann auch kein
+    // Fortsetzen. Still weiterzumachen hieße, jeder Datei unter irgendeinem
+    // Pfad die Teile einer anderen unterzuschieben.
+    if (!fingerabdruckVollstaendig(options.resumeFile)) {
+      return {
+        ok: false,
+        stage: 'resume',
+        code: 'RESUME_FILE_MISSING',
+        uploadId: options.uploadId,
+        error: 'Zum Fortsetzen gehört der Fingerabdruck der Datei (resumeFile: Pfad, Größe, Änderungszeit, wie onUploadStart ihn gemeldet hat) – ohne ihn lässt sich nicht prüfen, ob noch dieselbe Datei vorliegt.',
+      };
+    }
     const abweichung = fileFingerprintMismatch(options.resumeFile, fingerabdruck);
     if (abweichung) {
       return {
@@ -96,8 +112,11 @@ async function uploadRecording(config, eventId, options, deps = {}) {
 
   let { upload_id: uploadId, part_size: partSize, part_count: partCount, urls } = plan.data;
 
-  // Der Plan muss zur Datei passen: Sonst lädt der zweite Lauf Stücke einer
-  // anderen Größe an dieselben Stellen – der Server fügt sie klaglos zusammen.
+  // Der Plan muss zur Datei passen: Sonst landen Stücke falscher Größe an
+  // denselben Stellen – der Server fügt sie klaglos zusammen. Das fängt einen
+  // Server ab, der sich verrechnet. Eine andere Datei gleicher Größe fängt es
+  // nicht: Beim Fortsetzen rechnet Psalmio den Plan aus der gesendeten Größe
+  // neu. Dafür ist der Fingerabdruck da.
   const erwartet = partSize > 0 ? Math.ceil(fileSize / partSize) : 0;
   if (!partSize || partCount !== erwartet) {
     return {
@@ -109,7 +128,23 @@ async function uploadRecording(config, eventId, options, deps = {}) {
     };
   }
 
-  options.onUploadStart?.({ uploadId, partSize, partCount, resumed: fortsetzen, file: fingerabdruck });
+  if (options.onUploadStart) {
+    try {
+      await options.onUploadStart({ uploadId, partSize, partCount, resumed: fortsetzen, file: fingerabdruck });
+    } catch (err) {
+      // Wer die Kennung nicht festhalten konnte, kann später nicht fortsetzen.
+      // Ein eben eröffneter Upload wäre dann nur noch Ballast – gleich zurückgeben.
+      // Ein fortgesetzter bleibt: Seine Kennung steht ja schon irgendwo.
+      if (!fortsetzen) await api.abortMultipart(config, eventId, { uploadId }, deps);
+      return {
+        ok: false,
+        stage: fortsetzen ? 'resume' : 'start',
+        code: 'UPLOAD_START_HOOK_FAILED',
+        uploadId: fortsetzen ? uploadId : undefined,
+        error: `onUploadStart ist gescheitert: ${err?.message ?? err}`,
+      };
+    }
+  }
   const done = new Set(plan.data.parts_done || []);
   let sentBefore = [...done].reduce((sum, n) => sum + partLength(n, partSize, partCount, fileSize), 0);
 
@@ -158,24 +193,28 @@ async function uploadRecording(config, eventId, options, deps = {}) {
 
 /** Woran eine Datei wiederzuerkennen ist: Pfad, Größe, Änderungszeit. */
 function fileFingerprint(filePath, stat) {
-  const abdruck = { path: filePath, size: stat.size };
   // Ganze Millisekunden: Der Wert geht durch JSON und zurück
-  if (Number.isFinite(stat.mtimeMs)) abdruck.mtimeMs = Math.round(stat.mtimeMs);
-  return abdruck;
+  return { path: filePath, size: stat.size, mtimeMs: Math.round(stat.mtimeMs) };
+}
+
+/** Alle drei Angaben da? Sonst lässt sich nichts vergleichen. */
+function fingerabdruckVollstaendig(abdruck) {
+  return Boolean(abdruck) && typeof abdruck.path === 'string' && abdruck.path !== ''
+    && Number.isFinite(abdruck.size) && Number.isFinite(abdruck.mtimeMs);
 }
 
 /**
  * Passt die Datei noch zu dem, was beim Eröffnen galt? Liefert den Grund der
- * Abweichung, sonst null.
- *
- * Fehlt im Gemerkten ein Feld (Stand aus einer älteren Fassung), wird es
- * übersprungen – über Größe und Pfad fällt der wichtigste Fall trotzdem auf.
+ * Abweichung, sonst null. Verglichen wird alles; ein unvollständiger
+ * Fingerabdruck gilt als Abweichung (in `uploadRecording` kommt er gar nicht bis
+ * hierher, dort heißt er `RESUME_FILE_MISSING`).
  */
 function fileFingerprintMismatch(gemerkt, jetzt) {
-  if (!gemerkt) return null;
-  if (gemerkt.path != null && gemerkt.path !== jetzt.path) return `Pfad: ${gemerkt.path} → ${jetzt.path}`;
-  if (gemerkt.size != null && gemerkt.size !== jetzt.size) return `Größe: ${gemerkt.size} → ${jetzt.size} Byte`;
-  if (gemerkt.mtimeMs != null && jetzt.mtimeMs != null && gemerkt.mtimeMs !== jetzt.mtimeMs) {
+  if (!fingerabdruckVollstaendig(gemerkt)) return 'Fingerabdruck unvollständig';
+  if (gemerkt.path !== jetzt.path) return `Pfad: ${gemerkt.path} → ${jetzt.path}`;
+  if (gemerkt.size !== jetzt.size) return `Größe: ${gemerkt.size} → ${jetzt.size} Byte`;
+  if (!Number.isFinite(jetzt.mtimeMs)) return 'Änderungszeit nicht lesbar';
+  if (gemerkt.mtimeMs !== jetzt.mtimeMs) {
     return `geändert am ${new Date(gemerkt.mtimeMs).toISOString()} → ${new Date(jetzt.mtimeMs).toISOString()}`;
   }
   return null;

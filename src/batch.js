@@ -189,14 +189,14 @@ async function runBatch(config, rows, options = {}, deps = {}) {
       if (signal?.aborted) break;
 
       // Fortgesetzt wird nur, wenn auch festgehalten ist, für welche Datei die
-      // Kennung gilt. Ein Stand ohne diesen Fingerabdruck stammt aus einer
-      // älteren Fassung – dann lieber von vorn als Teile zweier Dateien mischen.
-      const fortsetzbar = Boolean(eintrag.uploadId && eintrag.uploadFile);
-      melden({ type: 'start', index: index + 1, total: rows.length, ...row, resumed: fortsetzbar });
+      // Kennung gilt – das prüft uploadRecording selbst. Ein Stand ohne diesen
+      // Fingerabdruck (aus einer älteren Fassung) endet dort mit
+      // RESUME_FILE_MISSING; dann lieber von vorn als Teile zweier Dateien mischen.
+      melden({ type: 'start', index: index + 1, total: rows.length, ...row, resumed: Boolean(eintrag.uploadId && eintrag.uploadFile) });
       eintrag.attempts += 1;
       const result = await uploadRecording(config, row.eventId, {
         filePath: row.filePath,
-        uploadId: fortsetzbar ? eintrag.uploadId : undefined,
+        uploadId: eintrag.uploadId,
         resumeFile: eintrag.uploadFile,
         signal,
         // Die Kennung steht fest, sobald der Server sie ausgestellt hat – nicht
@@ -220,12 +220,12 @@ async function runBatch(config, rows, options = {}, deps = {}) {
         Object.assign(eintrag, { status: 'unknown', error: result.error });
       } else if (VORHANDEN.has(result.code)) {
         Object.assign(eintrag, { status: 'exists', error: result.error });
-      } else if (result.code === 'UPLOAD_NOT_RESUMABLE' || result.code === 'RESUME_FILE_MISMATCH') {
+      } else if (['UPLOAD_NOT_RESUMABLE', 'RESUME_FILE_MISMATCH', 'RESUME_FILE_MISSING'].includes(result.code)) {
         // Die gemerkte Kennung taugt nicht mehr – von vorn, ohne den Versuch zu zählen.
-        // Bei einer geänderten Datei liegen die alten Teile noch beim Server: Die
-        // gehören zu etwas, das es so nicht mehr gibt, also gleich verwerfen.
-        if (result.code === 'RESUME_FILE_MISMATCH') {
-          melden({ type: 'file-changed', ...row, error: result.error });
+        // Liegen die alten Teile noch beim Server, gehören sie zu einer Datei, die
+        // es so nicht mehr gibt (oder die sich nicht mehr prüfen lässt): gleich verwerfen.
+        if (result.code === 'RESUME_FILE_MISMATCH') melden({ type: 'file-changed', ...row, error: result.error });
+        if (result.code !== 'UPLOAD_NOT_RESUMABLE') {
           await api.abortMultipart(config, row.eventId, { uploadId: eintrag.uploadId }, deps);
         }
         eintrag.uploadId = undefined;

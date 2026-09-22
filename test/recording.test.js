@@ -18,7 +18,7 @@ const { tempFile, readBody } = require('./helpers');
 const PART = 100_000;
 
 async function mitPsalmio(optionen, run) {
-  const zustand = { teile: new Map(), anfragen: [], putVersuche: new Map(), abgeschlossen: null, einzeln: null };
+  const zustand = { teile: new Map(), anfragen: [], putVersuche: new Map(), abgeschlossen: null, einzeln: null, verworfen: null };
   const server = http.createServer(async (req, res) => {
     const json = (status, body) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
     const origin = `http://127.0.0.1:${server.address().port}`;
@@ -58,6 +58,7 @@ async function mitPsalmio(optionen, run) {
     if (pfad.endsWith('/multipart/resume')) {
       return json(200, { data: { ...plan(body.file_size), parts_done: [...zustand.teile.keys()].sort((a, b) => a - b) } });
     }
+    if (pfad.endsWith('/multipart/abort')) { zustand.verworfen = body.upload_id; return json(200, { data: { aborted: true } }); }
     if (pfad.endsWith('/multipart/complete')) {
       const summe = [...zustand.teile.values()].reduce((s, t) => s + t.length, 0);
       if (summe !== body.file_size) return json(409, { detail: { error_code: 'UPLOAD_INCOMPLETE', message: `${summe} von ${body.file_size}` } });
@@ -123,7 +124,10 @@ test('gibt ein Teil endgültig auf, bleibt der Upload fortsetzbar – und setzt 
   const { file, inhalt } = musterDatei(PART * 3);
   let gestoert = true;
   await mitPsalmio({ putStoerung: (nummer) => (gestoert && nummer === 3 ? 'kappen' : null) }, async (config, zustand) => {
-    const erster = await client.uploadRecording(config, '9', { filePath: file, partAttempts: 2 }, { retryDelayMs: 5 });
+    let abdruck = null;
+    const erster = await client.uploadRecording(config, '9', {
+      filePath: file, partAttempts: 2, onUploadStart: ({ file: f }) => { abdruck = f; },
+    }, { retryDelayMs: 5 });
     assert.equal(erster.ok, false);
     assert.equal(erster.stage, 'upload');
     assert.equal(erster.part, 3);
@@ -132,7 +136,7 @@ test('gibt ein Teil endgültig auf, bleibt der Upload fortsetzbar – und setzt 
 
     gestoert = false; // die Leitung steht wieder
     zustand.putVersuche.clear();
-    const zweiter = await client.uploadRecording(config, '9', { filePath: file, uploadId: erster.uploadId }, { retryDelayMs: 5 });
+    const zweiter = await client.uploadRecording(config, '9', { filePath: file, uploadId: erster.uploadId, resumeFile: abdruck }, { retryDelayMs: 5 });
 
     assert.equal(zweiter.ok, true, zweiter.error);
     assert.deepEqual([...zustand.putVersuche.keys()], [3], 'Teil 1 und 2 lagen schon – nur der Rest geht über die Leitung');
@@ -286,5 +290,68 @@ test('ein Plan, der nicht zur Datei passt, wird abgelehnt – sonst landen Stüc
     assert.equal(result.ok, false);
     assert.equal(result.code, 'START_PLAN_MISMATCH');
     assert.equal(zustand.teile.size, 0);
+  });
+});
+
+test('eine uploadId ohne Fingerabdruck wird abgelehnt, bevor Psalmio gefragt wird – still fortsetzen hieße, jeder Datei fremde Teile unterzuschieben', async () => {
+  // So kam es aus der Kommandozeile: „psalmio upload … --resume u1" gab keinen resumeFile mit
+  const { file } = musterDatei(PART * 2);
+  await mitPsalmio({}, async (config, zustand) => {
+    const ohne = await client.uploadRecording(config, '9', { filePath: file, uploadId: 'u1' });
+    assert.deepEqual([ohne.ok, ohne.stage, ohne.code, ohne.uploadId], [false, 'resume', 'RESUME_FILE_MISSING', 'u1']);
+
+    const stat = fs.statSync(file);
+    const halb = await client.uploadRecording(config, '9', { filePath: file, uploadId: 'u1', resumeFile: { path: file, size: stat.size } });
+    assert.equal(halb.code, 'RESUME_FILE_MISSING', 'ohne Änderungszeit ist der Abdruck nicht vollständig');
+
+    assert.equal(zustand.anfragen.length, 0);
+    assert.equal(zustand.teile.size, 0);
+  });
+});
+
+test('onUploadStart darf eine Promise liefern – das erste Byte fließt erst, wenn sie erfüllt ist', async () => {
+  const { file } = musterDatei(PART * 2);
+  await mitPsalmio({}, async (config) => {
+    const ablauf = [];
+    const result = await client.uploadRecording(config, '9', {
+      filePath: file,
+      onUploadStart: async () => {
+        await new Promise((r) => setTimeout(r, 30));
+        ablauf.push('kennung gesichert');
+      },
+      onProgress: () => { if (ablauf.at(-1) !== 'bytes') ablauf.push('bytes'); },
+    });
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(ablauf, ['kennung gesichert', 'bytes']);
+  });
+});
+
+test('scheitert onUploadStart, endet der Upload vor dem ersten Byte – und der eben eröffnete wird gleich zurückgegeben', async () => {
+  const { file } = musterDatei(PART * 2);
+  await mitPsalmio({}, async (config, zustand) => {
+    for (const rueckruf of [() => { throw new Error('Platte voll'); }, async () => { throw new Error('Platte voll'); }]) {
+      zustand.verworfen = null;
+      const result = await client.uploadRecording(config, '9', { filePath: file, onUploadStart: rueckruf });
+      assert.deepEqual([result.ok, result.stage, result.code], [false, 'start', 'UPLOAD_START_HOOK_FAILED']);
+      assert.match(result.error, /Platte voll/);
+      assert.equal(result.uploadId, undefined, 'die Kennung ist verworfen – mit ihr lässt sich nichts fortsetzen');
+      assert.equal(zustand.verworfen, 'u1');
+      assert.equal(zustand.teile.size, 0);
+    }
+  });
+});
+
+test('scheitert onUploadStart beim Fortsetzen, bleibt der Upload fortsetzbar – seine Kennung steht ja schon irgendwo', async () => {
+  const { file } = musterDatei(PART * 2);
+  await mitPsalmio({}, async (config, zustand) => {
+    const stat = fs.statSync(file);
+    const result = await client.uploadRecording(config, '9', {
+      filePath: file,
+      uploadId: 'u1',
+      resumeFile: { path: file, size: stat.size, mtimeMs: Math.round(stat.mtimeMs) },
+      onUploadStart: () => { throw new Error('Platte voll'); },
+    });
+    assert.deepEqual([result.ok, result.stage, result.code, result.uploadId], [false, 'resume', 'UPLOAD_START_HOOK_FAILED', 'u1']);
+    assert.equal(zustand.verworfen, null);
   });
 });

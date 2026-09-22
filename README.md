@@ -43,8 +43,19 @@ psalmio status
 psalmio event 7944
 psalmio start 7944 --at 2026-09-20T10:00:00+02:00
 psalmio upload aufnahme.mp4 --event 7944 --started-at 2026-09-20T09:58:30+02:00
-psalmio upload aufnahme.mp4 --event 7944 --resume <upload-id>   # nach einem Abbruch
+psalmio upload aufnahme.mp4 --event 7944 --resume   # nach einem Abbruch: derselbe Befehl, mit --resume
 ```
+
+Sobald Psalmio den Upload eröffnet hat, stehen Kennung und Fingerabdruck der
+Datei (Pfad, Größe, Änderungszeit) in `aufnahme.mp4.psalmio-upload.json` – auch
+ein abgeschossener Prozess oder ein Stromausfall lässt sich also fortsetzen.
+`--resume` liest beides von dort und setzt nur fort, wenn unter dem Pfad noch
+dieselbe Datei liegt; sonst endet es mit `RESUME_FILE_MISMATCH`, und ein Aufruf
+ohne `--resume` beginnt von vorn (den halben Upload gibt er dabei zurück). Liegt
+die Aufnahme auf einem Laufwerk ohne Schreibrecht: `--state <datei>`.
+
+Optionen gehen als `--name wert` oder `--name=wert`. Unbekannte Optionen und
+fehlende Werte enden mit Rückgabewert 64, statt still übergangen zu werden.
 
 ### Ein ganzes Archiv: `psalmio batch`
 
@@ -90,8 +101,8 @@ Skript, wie es weitergeht:
 | 0 | erledigt | – |
 | 1 | gescheitert | nachsehen |
 | 2 | Psalmio führt diesen Termin nicht | überspringen |
-| 3 | vorübergehend nicht möglich | später wiederholen; bei `upload` mit der ausgegebenen `--resume`-Kennung |
-| 64 | falsch aufgerufen | – |
+| 3 | vorübergehend nicht möglich | später wiederholen; bei `upload` derselbe Befehl mit `--resume` |
+| 64 | falsch aufgerufen (auch: unbekannte Option, fehlender Wert) | – |
 
 Den Key als Argument gibt es mit Absicht nicht: Argumente stehen für jeden
 Benutzer des Rechners lesbar in der Prozessliste.
@@ -132,7 +143,11 @@ die Teile noch nicht, weicht der Aufruf auf den einzelnen PUT aus (bis 5 GB).
 Die `uploadId` steht fest, sobald der Server sie ausgestellt hat – nicht erst,
 wenn der Aufruf zurückkommt. `onUploadStart` meldet sie mitsamt dem
 Fingerabdruck der Datei; wer beides sofort wegschreibt, kann auch nach einem
-Stromausfall fortsetzen:
+Stromausfall fortsetzen. Der Rückruf darf eine Promise liefern – das erste Byte
+fließt erst, wenn sie erfüllt ist. Scheitert er, endet der Upload vorher
+(`UPLOAD_START_HOOK_FAILED`), und ein eben eröffneter Upload wird gleich
+zurückgegeben: Wer die Kennung nicht festhalten konnte, kann ihn ohnehin nicht
+fortsetzen.
 
 ```js
 await psalmio.uploadRecording(config, '7944', {
@@ -149,12 +164,16 @@ const result = await psalmio.uploadRecording(config, '7944', {
 if (result.code === 'RESUME_FILE_MISMATCH') /* andere Datei – von vorn */;
 ```
 
-Ohne `resumeFile` hat niemand etwas zu vergleichen. Liegt unter dem Pfad
-inzwischen eine andere Datei, würden Teile aus beiden zu **einer** Aufnahme
-zusammengefügt – und niemand merkte es. Mit `resumeFile` wird das Fortsetzen
-verweigert (`RESUME_FILE_MISMATCH`), und auch ein Plan, der nicht zur Datei
-passt, fällt auf (`RESUME_PLAN_MISMATCH`). `runBatch` führt den Fingerabdruck
-in seinem Stand mit und macht das von selbst.
+**Ohne `resumeFile` kein Fortsetzen.** Eine `uploadId` ohne vollständigen
+Fingerabdruck (Pfad, Größe und Änderungszeit) wird abgelehnt
+(`RESUME_FILE_MISSING`), bevor Psalmio gefragt wird. Sonst gäbe es nichts zu
+vergleichen: Liegt unter dem Pfad inzwischen eine andere Datei, würden Teile
+aus beiden zu **einer** Aufnahme zusammengefügt – und niemand merkte es. Der
+Fingerabdruck ist dabei der einzige Schutz. Psalmio rechnet den Plan beim
+Fortsetzen aus der gesendeten Größe neu, eine andere Datei gleicher Größe fällt
+dem Server also nicht auf. Die Prüfung des Plans (`RESUME_PLAN_MISMATCH`)
+fängt nur einen Server ab, der sich verrechnet. `runBatch` führt den
+Fingerabdruck in seinem Stand mit und macht das von selbst.
 
 Die einzelnen Schritte gibt es auch einzeln: `checkConnection`, `getEvent`,
 `startEvent`, `requestUpload`, `uploadFile`, `completeUpload`, `startMultipart`,
@@ -180,6 +199,10 @@ Jede dieser Zusagen ist ein Test in `test/`:
   und beides etwas anderes als „gerade nicht erreichbar" (503).
 - **Vorhandenes wird nie überschrieben** – das stellt Psalmio selbst sicher
   (409), der Client reicht es unverändert durch.
+- **Aus zwei Dateien wird nie eine Aufnahme.** Fortgesetzt wird nur mit dem
+  Fingerabdruck der Datei, in der Bibliothek wie auf der Kommandozeile – auch
+  wenn die neue Datei genauso groß ist und nur die Änderungszeit sie verrät.
+  Getestet mit einem Prozess, der mitten im Upload abgeschossen wird.
 
 ## Versionen
 

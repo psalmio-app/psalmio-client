@@ -167,14 +167,20 @@ test('geänderte Datei: der halbe Upload wird verworfen, statt zwei Dateien zu e
   });
 });
 
-test('ein Stand ohne Fingerabdruck wird nicht fortgesetzt – lieber von vorn als vermischt', async () => {
-  await mitPsalmio({}, async (config, z) => {
-    const [row] = zeilen('1');
-    const state = { 1: { status: 'open', attempts: 0, uploadId: 'u-alt' } };
-    await client.runBatch(config, [row], { state }, SCHNELL);
-    assert.equal(z.anfragen.filter((pfad) => pfad.endsWith('/multipart/resume')).length, 0);
-    assert.equal(z.anfragen.filter((pfad) => pfad.endsWith('/multipart/start')).length, 1);
-  });
+test('ein Stand ohne vollständigen Fingerabdruck wird nicht fortgesetzt – lieber von vorn als vermischt', async () => {
+  for (const uploadFile of [undefined, { path: 'irgendwo.mp4', size: 5000 }]) {
+    await mitPsalmio({}, async (config, z) => {
+      const [row] = zeilen('1');
+      const state = { 1: { status: 'open', attempts: 0, uploadId: 'u-alt', uploadFile } };
+      const lauf = await client.runBatch(config, [row], { state }, SCHNELL);
+      assert.equal(z.anfragen.filter((pfad) => pfad.endsWith('/multipart/resume')).length, 0);
+      assert.equal(z.anfragen.filter((pfad) => pfad.endsWith('/multipart/start')).length, 1);
+      // Was unter der alten Kennung liegt, lässt sich keiner Datei mehr sicher zuordnen
+      assert.deepEqual(z.verworfen, ['u-alt']);
+      assert.equal(lauf.state['1'].status, 'done');
+      assert.equal(lauf.state['1'].attempts, 1);
+    });
+  }
 });
 
 test('vorübergehende Störung (503): warten und wiederholen statt aufgeben', async () => {

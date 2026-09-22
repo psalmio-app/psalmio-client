@@ -35,6 +35,32 @@ MBG Lemgo (eingebaut von Samuel Funk, gehärtet und getestet von Tim Fast).
   abzubrechen – wer eine Zuordnungsdatei bereinigt, will sie in einem Durchgang
   sehen.
 
+### Aus der zweiten Durchsicht von Tim Fast (Stand 6bc74e8)
+
+- **Kein Fortsetzen ohne Fingerabdruck.** `psalmio upload --resume <id>` gab der
+  Bibliothek keinen `resumeFile` mit, und `uploadRecording` übersprang die
+  Prüfung dann ganz: Eine gleich groß neu geschriebene Datei wurde mit den Teilen
+  der alten zu einer Aufnahme. Jetzt lehnt `uploadRecording` eine `uploadId`
+  ohne vollständigen Fingerabdruck ab (`RESUME_FILE_MISSING`, Stufe `resume`),
+  bevor Psalmio gefragt wird; der Abgleich prüft Pfad, Größe und Änderungszeit
+  ohne Ausnahme.
+- **Die Kommandozeile merkt sich den Fingerabdruck.** `psalmio upload` schreibt
+  Kennung und Fingerabdruck in `<datei>.psalmio-upload.json` (oder `--state`),
+  sobald Psalmio den Upload eröffnet hat; `--resume` liest sie dort. Die Kennung
+  von Hand (`--resume <id>`) gibt es nicht mehr – die alte Form endet mit 64.
+  Ein neuer Start ohne `--resume` gibt den halben Upload von vorher zurück.
+- **`onUploadStart` wird abgewartet und abgefangen.** Er darf eine Promise
+  liefern; scheitert er, endet der Upload vor dem ersten Byte
+  (`UPLOAD_START_HOOK_FAILED`), und ein eben eröffneter Upload wird zurückgegeben.
+- **Optionen als `--name=wert`.** `--window-tz=Europe/Berlin` fiel vorher still
+  weg – mit ihm das ganze Zeitfenster. Unbekannte Optionen und fehlende Werte
+  enden jetzt mit Rückgabewert 64.
+- `runBatch` gibt auch einen Upload zurück, dessen Stand keinen vollständigen
+  Fingerabdruck trägt, und beginnt neu.
+- Zur Frage nach dem Plan: Psalmio rechnet ihn beim Fortsetzen aus der gesendeten
+  Größe neu. Gegen eine andere Datei gleicher Größe schützt allein der
+  Fingerabdruck – steht jetzt so in `docs/API.md` und im README.
+
 ### Für den Umstieg aus der Workflow Engine
 
 - `completeUpload(config, eventId, deps)` → `completeUpload(config, eventId, { recordingStartedAt }, deps)`
