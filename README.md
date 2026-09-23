@@ -54,7 +54,8 @@ dieselbe Datei liegt; sonst endet es mit `RESUME_FILE_MISMATCH`, und ein Aufruf
 ohne `--resume` beginnt von vorn (den halben Upload gibt er dabei zurück). Liegt
 die Aufnahme auf einem Laufwerk ohne Schreibrecht: `--state <datei>`.
 
-Optionen gehen als `--name wert` oder `--name=wert`. Unbekannte Optionen und
+Optionen gehen als `--name wert` oder `--name=wert` und gelten nur für den Befehl,
+bei dem sie stehen. Unbekannte Optionen, eine Option am falschen Befehl und
 fehlende Werte enden mit Rückgabewert 64, statt still übergangen zu werden.
 
 ### Ein ganzes Archiv: `psalmio batch`

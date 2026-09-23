@@ -36,10 +36,17 @@ async function mitPsalmio(verhalten, run) {
       return json(200, { data: { upload_id: `u-${id}`, part_size: 1_000_000, part_count: 1, urls: { 1: `${origin}/b/${id}?partNumber=1` } } });
     }
     if (pfad.endsWith('/multipart/resume')) {
+      const absage = verhalten.resumeAbsagen?.[id];
+      if (absage) return json(absage.status, { detail: absage.detail });
       return json(200, { data: { upload_id: body.upload_id, part_size: 1_000_000, part_count: 1, parts_done: [], urls: { 1: `${origin}/b/${id}?partNumber=1` } } });
     }
     if (pfad.endsWith('/multipart/abort')) { z.verworfen.push(body.upload_id); return json(200, { data: { aborted: true } }); }
-    if (pfad.endsWith('/multipart/complete')) { z.hochgeladen.push(id); return json(200, { data: { job_id: Number(id), file_size: body.file_size } }); }
+    if (pfad.endsWith('/multipart/complete')) {
+      const absage = verhalten.completeAbsagen?.[id];
+      if (absage) return json(absage.status, { detail: absage.detail });
+      z.hochgeladen.push(id);
+      return json(200, { data: { job_id: Number(id), file_size: body.file_size } });
+    }
     return json(404, { detail: 'Not Found' });
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -181,6 +188,42 @@ test('ein Stand ohne vollständigen Fingerabdruck wird nicht fortgesetzt – lie
       assert.equal(lauf.state['1'].attempts, 1);
     });
   }
+});
+
+const NICHT_FORTSETZBAR = { status: 404, detail: { error_code: 'UPLOAD_NOT_RESUMABLE', message: 'Upload unbekannt oder abgelaufen' } };
+
+test('verwirft Psalmio den Upload erst beim Zusammenfügen, zählt der Versuch – kein endloser Neustart (Issue #1)', async () => {
+  await mitPsalmio({ completeAbsagen: { 1: NICHT_FORTSETZBAR } }, async (config, z) => {
+    // Notbremse: Beginnt der Lauf endlos neu, soll der Test scheitern statt hängen
+    const bremse = new AbortController();
+    let starts = 0;
+    const onEvent = (e) => { if (e.type === 'start' && ++starts > 5) bremse.abort(); };
+    const lauf = await client.runBatch(config, zeilen('1', '2'), { signal: bremse.signal, onEvent }, SCHNELL);
+    assert.equal(lauf.aborted, false, `${starts} Starts – der Lauf beginnt endlos von vorn`);
+    assert.equal(lauf.state['1'].status, 'failed');
+    assert.equal(lauf.state['1'].attempts, 1);
+    assert.match(lauf.state['1'].error, /UPLOAD_NOT_RESUMABLE/);
+    // Die Kennung kennt der Server nicht mehr – ein neuer Lauf beginnt von vorn statt sie fortzusetzen
+    assert.equal(lauf.state['1'].uploadId, undefined);
+    assert.equal(lauf.state['1'].uploadFile, undefined);
+    assert.equal(z.anfragen.filter((pfad) => pfad.includes('/1/') && pfad.endsWith('/multipart/start')).length, 1);
+    assert.deepEqual(z.hochgeladen, ['2'], 'die nächste Zeile des Manifests kommt dran');
+  });
+});
+
+test('kennt Psalmio die Kennung beim Fortsetzen nicht mehr, geht es ungezählt von vorn los', async () => {
+  await mitPsalmio({ resumeAbsagen: { 1: NICHT_FORTSETZBAR } }, async (config, z) => {
+    const [row] = zeilen('1');
+    const fs = require('node:fs');
+    const stat = fs.statSync(row.filePath);
+    const uploadFile = { path: row.filePath, size: stat.size, mtimeMs: Math.round(stat.mtimeMs) };
+    const state = { 1: { status: 'open', attempts: 0, uploadId: 'u-alt', uploadFile } };
+    const lauf = await client.runBatch(config, [row], { state }, SCHNELL);
+    assert.equal(z.anfragen.filter((pfad) => pfad.endsWith('/multipart/resume')).length, 1);
+    assert.equal(z.anfragen.filter((pfad) => pfad.endsWith('/multipart/start')).length, 1);
+    assert.equal(lauf.state['1'].status, 'done');
+    assert.equal(lauf.state['1'].attempts, 1);
+  });
 });
 
 test('vorübergehende Störung (503): warten und wiederholen statt aufgeben', async () => {

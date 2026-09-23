@@ -72,6 +72,11 @@ async function mitPsalmio(steuerung, run) {
       return json(200, { data: { aborted: true } });
     }
     if (pfad.endsWith('/multipart/complete')) {
+      // Wie der Speicher mit der Ein-Tag-Regel: Der Upload ist beim Zusammenfügen schon weg
+      if (steuerung.verworfenBeimZusammenfuegen) {
+        z.uploads.delete(body.upload_id);
+        return json(404, { detail: { error_code: 'UPLOAD_NOT_RESUMABLE', message: 'Upload unbekannt oder abgelaufen' } });
+      }
       const teile = z.uploads.get(body.upload_id);
       const ganz = Buffer.concat([...teile.keys()].sort((a, b) => a - b).map((n) => teile.get(n)));
       if (ganz.length !== body.file_size) return json(409, { detail: { error_code: 'UPLOAD_INCOMPLETE', message: `${ganz.length} von ${body.file_size}` } });
@@ -229,5 +234,35 @@ test('falsch aufgerufen: unbekannte Option, fehlender Wert, alte Form „--resum
       assert.equal(lauf.code, 64, `${args.join(' ')} → ${lauf.code}: ${lauf.err}`);
     }
     assert.equal(z.anfragen.length, 0);
+  });
+});
+
+test('Option am falschen Befehl: „upload … --dry-run" lädt nicht wirklich hoch – Rückgabewert 64', async () => {
+  const { file } = musterDatei(PART);
+  await mitPsalmio({}, async (origin, z) => {
+    for (const args of [
+      ['upload', file, '--event', '9', '--dry-run'],
+      ['start', '9', '--window', '22:00-06:00'],
+      ['batch', 'zuordnung.tsv', '--event', '9'],
+      ['event', '9', '--state', 'stand.json'],
+      ['status', '--resume'],
+    ]) {
+      const lauf = await psalmio(origin, args);
+      assert.equal(lauf.code, 64, `${args.join(' ')} → ${lauf.code}: ${lauf.err}`);
+      assert.match(lauf.err, /gilt nicht für/);
+    }
+    assert.equal(z.anfragen.length, 0);
+    assert.equal(fs.existsSync(`${file}.psalmio-upload.json`), false);
+  });
+});
+
+test('Psalmio verwirft den Upload beim Zusammenfügen: kein Stand zum Fortsetzen, Hinweis auf einen neuen Upload', async () => {
+  const { file } = musterDatei(PART * 2);
+  await mitPsalmio({ verworfenBeimZusammenfuegen: true }, async (origin) => {
+    const lauf = await psalmio(origin, ['upload', file, '--event', '9']);
+    assert.equal(lauf.code, 1, lauf.err);
+    assert.match(lauf.err, /UPLOAD_NOT_RESUMABLE/);
+    assert.match(lauf.err, /ohne --resume neu hochladen/);
+    assert.equal(fs.existsSync(`${file}.psalmio-upload.json`), false, 'eine Kennung, die Psalmio nicht mehr kennt, wird nicht zum Fortsetzen angeboten');
   });
 });

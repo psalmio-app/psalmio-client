@@ -53,7 +53,8 @@ Einrichtung (Umgebungsvariablen):
 
   --json            Ergebnis als JSON statt als Text
 
-Optionen gehen als --name wert oder --name=wert.
+Optionen gehen als --name wert oder --name=wert und gelten nur beim Befehl,
+bei dem sie oben stehen.
 `;
 
 /** Ein Aufruf, der so nicht gemeint sein kann – Rückgabewert 64. */
@@ -61,6 +62,21 @@ class Aufruffehler extends Error {}
 
 const SCHALTER = new Set(['json', 'help', 'dry-run', 'resume']);
 const MIT_WERT = new Set(['event', 'at', 'started-at', 'url', 'key-file', 'window', 'window-tz', 'state', 'root-from', 'root-to']);
+
+/**
+ * Welche Optionen jeder Befehl kennt. Eine bekannte Option am falschen Befehl
+ * ist ein Aufruffehler: Vorher galten die Listen oben für alle Befehle, und
+ * „psalmio upload aufnahme.mp4 --event 9 --dry-run" lud wirklich hoch und
+ * endete mit 0.
+ */
+const FUER_ALLE = ['json', 'help', 'url', 'key-file'];
+const OPTIONEN = {
+  status: new Set(FUER_ALLE),
+  event: new Set(FUER_ALLE),
+  start: new Set([...FUER_ALLE, 'at']),
+  upload: new Set([...FUER_ALLE, 'event', 'started-at', 'resume', 'state']),
+  batch: new Set([...FUER_ALLE, 'window', 'window-tz', 'state', 'dry-run', 'root-from', 'root-to']),
+};
 
 /**
  * Optionen als --name wert oder --name=wert. Was der Parser nicht kennt, ist ein
@@ -134,6 +150,11 @@ async function main() {
   const { positional, flags } = argumente(process.argv.slice(2));
   const [befehl, erstes] = positional;
   if (flags.help || !befehl) { console.log(HILFE); return befehl ? 0 : 64; }
+  // Vor allem anderen – auch vor dem Lesen des Keys: Was nicht zum Befehl passt, wird nicht still übergangen
+  const erlaubt = OPTIONEN[befehl];
+  for (const name of Object.keys(flags)) {
+    if (erlaubt && !erlaubt.has(name)) throw new Aufruffehler(`--${name} gilt nicht für „psalmio ${befehl}"`);
+  }
   const config = konfiguration(flags);
 
   if (befehl === 'status') {
@@ -228,9 +249,11 @@ async function hochladen(config, datei, flags) {
   });
   if (!flags.json) process.stderr.write('\n');
 
-  if (result.ok) fs.rmSync(merkPfad, { force: true });
+  // Erledigt – oder Psalmio kennt die Kennung nicht mehr: In beiden Fällen gibt es nichts fortzusetzen
+  if (result.ok || result.code === 'UPLOAD_NOT_RESUMABLE') fs.rmSync(merkPfad, { force: true });
   let hinweis;
   if (result.code === 'RESUME_FILE_MISMATCH') hinweis = 'Unter dem Pfad liegt eine andere Datei als beim Abbruch – ohne --resume neu hochladen.';
+  else if (result.code === 'UPLOAD_NOT_RESUMABLE') hinweis = 'Psalmio hat den halben Upload verworfen – ohne --resume neu hochladen.';
   else if (!result.ok && fs.existsSync(merkPfad) && result.code !== 'RESUME_FILE_MISSING') hinweis = 'Fortsetzen: denselben Befehl mit --resume wiederholen.';
   return ende(result, flags, (r) => `Aufnahme übernommen, Verarbeitung gestartet (Job ${r.data?.job_id ?? '?'}).`, hinweis);
 }

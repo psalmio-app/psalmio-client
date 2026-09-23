@@ -220,10 +220,13 @@ async function runBatch(config, rows, options = {}, deps = {}) {
         Object.assign(eintrag, { status: 'unknown', error: result.error });
       } else if (VORHANDEN.has(result.code)) {
         Object.assign(eintrag, { status: 'exists', error: result.error });
-      } else if (['UPLOAD_NOT_RESUMABLE', 'RESUME_FILE_MISMATCH', 'RESUME_FILE_MISSING'].includes(result.code)) {
+      } else if (result.stage === 'resume' && ['UPLOAD_NOT_RESUMABLE', 'RESUME_FILE_MISMATCH', 'RESUME_FILE_MISSING'].includes(result.code)) {
         // Die gemerkte Kennung taugt nicht mehr – von vorn, ohne den Versuch zu zählen.
         // Liegen die alten Teile noch beim Server, gehören sie zu einer Datei, die
         // es so nicht mehr gibt (oder die sich nicht mehr prüfen lässt): gleich verwerfen.
+        // Nur beim Fortsetzen: Kommt UPLOAD_NOT_RESUMABLE erst beim Zusammenfügen
+        // (der Speicher hat den Upload nach einem Tag verworfen), ginge ein
+        // ungezählter Neustart denselben Weg wieder – endlos (Issue #1).
         if (result.code === 'RESUME_FILE_MISMATCH') melden({ type: 'file-changed', ...row, error: result.error });
         if (result.code !== 'UPLOAD_NOT_RESUMABLE') {
           await api.abortMultipart(config, row.eventId, { uploadId: eintrag.uploadId }, deps);
@@ -234,7 +237,13 @@ async function runBatch(config, rows, options = {}, deps = {}) {
         speichern();
         continue;
       } else {
-        if (result.uploadId) eintrag.uploadId = result.uploadId;
+        // Eine Kennung, die der Server nicht mehr kennt, taugt auch für den nächsten Lauf nicht
+        if (result.code === 'UPLOAD_NOT_RESUMABLE') {
+          eintrag.uploadId = undefined;
+          eintrag.uploadFile = undefined;
+        } else if (result.uploadId) {
+          eintrag.uploadId = result.uploadId;
+        }
         eintrag.error = `${result.stage}: ${result.error}${result.code ? ` [${result.code}]` : ''}`;
         // Eine fehlende oder leere Datei wird durch Warten nicht besser
         const wiederholbar = result.stage !== 'file' && (

@@ -1,6 +1,26 @@
 # Änderungen
 
-## 0.1.0 – noch nicht veröffentlicht
+## 0.1.1 – 23.09.2026
+
+Aus der Nachstellung von Tim Fast (Stand `ee98699`, getaggt als `v0.1.0`):
+
+- **Kein endloser Neustart mehr, wenn Psalmio den Upload beim Zusammenfügen
+  verwirft (Issue #1).** Meldete `multipart/complete` 404 `UPLOAD_NOT_RESUMABLE`
+  – etwa weil der Speicher einen halben Upload nach einem Tag verwirft, und
+  15 GB über Nacht reichen dafür –, begann `runBatch` von vorn, ohne den Versuch
+  zu zählen: 709 Starts und 2124 PUTs in anderthalb Sekunden, die nächste Zeile
+  des Manifests kam nie dran. Ungezählt neu beginnt es jetzt nur noch, wenn die
+  Absage beim *Fortsetzen* kommt (Stufe `resume`). Beim Zusammenfügen zählt der
+  Versuch, der Termin endet als gescheitert, und der Stand vergisst die Kennung,
+  die der Server nicht mehr kennt – der nächste Lauf beginnt von vorn.
+  `psalmio upload` löscht in dem Fall seine Merkdatei und rät zu einem neuen
+  Upload statt zu `--resume`.
+- **Optionen gelten je Befehl.** Die Listen bekannter Optionen galten für alle
+  Befehle; `psalmio upload aufnahme.mp4 --event 9 --dry-run` lud deshalb
+  wirklich hoch und endete mit 0. Eine Option am falschen Befehl endet jetzt mit
+  Rückgabewert 64, bevor irgendetwas passiert.
+
+## 0.1.0 – 23.09.2026
 
 Erste Fassung, herausgelöst aus der Psalmio-Anbindung in der Workflow Engine der
 MBG Lemgo (eingebaut von Samuel Funk, gehärtet und getestet von Tim Fast).
