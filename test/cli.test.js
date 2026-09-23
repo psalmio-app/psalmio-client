@@ -54,6 +54,10 @@ async function mitPsalmio(steuerung, run) {
       return { upload_id: uploadId, part_size: PART, part_count: anzahl, urls, expires_in: 21600 };
     };
 
+    if (pfad.endsWith('/start') && !pfad.includes('/multipart/')) {
+      z.gestartet = body.started_at;
+      return json(200, { data: { already_started: false } });
+    }
     if (pfad.endsWith('/multipart/start')) {
       z.starts += 1;
       const uploadId = `u${z.starts}`;
@@ -264,5 +268,42 @@ test('Psalmio verwirft den Upload beim Zusammenfügen: kein Stand zum Fortsetzen
     assert.match(lauf.err, /UPLOAD_NOT_RESUMABLE/);
     assert.match(lauf.err, /ohne --resume neu hochladen/);
     assert.equal(fs.existsSync(`${file}.psalmio-upload.json`), false, 'eine Kennung, die Psalmio nicht mehr kennt, wird nicht zum Fortsetzen angeboten');
+  });
+});
+
+test('Befehlsname wie eine Eigenschaft des Objekt-Prototyps: Rückgabewert 64, kein „is not a function"', async () => {
+  for (const args of [['constructor', '--json'], ['__proto__', '--json'], ['toString', '--url', 'http://127.0.0.1:9']]) {
+    const lauf = await psalmio('http://127.0.0.1:9', args);
+    assert.equal(lauf.code, 64, `${args.join(' ')} → ${lauf.code}: ${lauf.err}`);
+    assert.doesNotMatch(lauf.err, /is not a function/);
+  }
+});
+
+test('unplausible Zeiten enden mit 64, bevor Psalmio gefragt wird – „2026" ist kein Zeitpunkt, Millisekunden sind keine Sekunden', async () => {
+  const { file } = musterDatei(PART);
+  await mitPsalmio({}, async (origin, z) => {
+    for (const [args, grund] of [
+      [['start', '9', '--at', '2026'], /unplausibel: 2026 wäre 1970/],
+      [['start', '9', '--at', '1790000000000'], /Millisekunden/],
+      [['start', '9', '--at', 'gestern'], /nicht lesbar/],
+      [['upload', file, '--event', '9', '--started-at', '2026'], /unplausibel/],
+    ]) {
+      const lauf = await psalmio(origin, args);
+      assert.equal(lauf.code, 64, `${args.join(' ')} → ${lauf.code}: ${lauf.err}`);
+      assert.match(lauf.err, grund);
+    }
+    assert.equal(z.anfragen.length, 0);
+    assert.equal(fs.existsSync(`${file}.psalmio-upload.json`), false);
+  });
+});
+
+test('gültige Zeiten gehen durch: Unix-Sekunden und ISO-Zeit mit Zone', async () => {
+  await mitPsalmio({}, async (origin, z) => {
+    let lauf = await psalmio(origin, ['start', '9', '--at', '2026-09-20T10:00:00+02:00']);
+    assert.equal(lauf.code, 0, lauf.err);
+    assert.equal(z.gestartet, Date.UTC(2026, 8, 20, 8, 0, 0) / 1000);
+    lauf = await psalmio(origin, ['start', '9', '--at', '1790000000']);
+    assert.equal(lauf.code, 0, lauf.err);
+    assert.equal(z.gestartet, 1790000000);
   });
 });

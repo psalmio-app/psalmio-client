@@ -54,7 +54,8 @@ Einrichtung (Umgebungsvariablen):
   --json            Ergebnis als JSON statt als Text
 
 Optionen gehen als --name wert oder --name=wert und gelten nur beim Befehl,
-bei dem sie oben stehen.
+bei dem sie oben stehen. Zeiten (--at, --started-at) als Unix-Sekunden oder
+ISO-Zeit, zwischen 1990 und morgen.
 `;
 
 /** Ein Aufruf, der so nicht gemeint sein kann – Rückgabewert 64. */
@@ -70,13 +71,15 @@ const MIT_WERT = new Set(['event', 'at', 'started-at', 'url', 'key-file', 'windo
  * endete mit 0.
  */
 const FUER_ALLE = ['json', 'help', 'url', 'key-file'];
-const OPTIONEN = {
-  status: new Set(FUER_ALLE),
-  event: new Set(FUER_ALLE),
-  start: new Set([...FUER_ALLE, 'at']),
-  upload: new Set([...FUER_ALLE, 'event', 'started-at', 'resume', 'state']),
-  batch: new Set([...FUER_ALLE, 'window', 'window-tz', 'state', 'dry-run', 'root-from', 'root-to']),
-};
+// Eine Map, kein Objekt: „psalmio constructor --json" fand sonst die Eigenschaft
+// des Objekt-Prototyps und endete mit „erlaubt.has is not a function" statt mit 64
+const OPTIONEN = new Map([
+  ['status', new Set(FUER_ALLE)],
+  ['event', new Set(FUER_ALLE)],
+  ['start', new Set([...FUER_ALLE, 'at'])],
+  ['upload', new Set([...FUER_ALLE, 'event', 'started-at', 'resume', 'state'])],
+  ['batch', new Set([...FUER_ALLE, 'window', 'window-tz', 'state', 'dry-run', 'root-from', 'root-to'])],
+]);
 
 /**
  * Optionen als --name wert oder --name=wert. Was der Parser nicht kennt, ist ein
@@ -111,13 +114,32 @@ function genau(positional, anzahl) {
   if (positional.length > anzahl) throw new Aufruffehler(`Unerwartetes Argument: ${positional[anzahl]}`);
 }
 
-/** Unix-Sekunden aus „1790000000" oder „2026-09-20T10:00:00+02:00". */
-function zeitpunkt(wert) {
+/** Früher liegt keine Aufnahme, die als Datei nach Psalmio kommt. */
+const FRUEHESTENS = Date.UTC(1990, 0, 1) / 1000;
+
+/**
+ * Unix-Sekunden aus „1790000000" oder „2026-09-20T10:00:00+02:00".
+ *
+ * Nur, was als Zeitpunkt einer Aufnahme taugt: nicht vor 1990 und höchstens
+ * einen Tag in der Zukunft. Vorher ging jeder Wert durch – „2026" landete 1970,
+ * ein Zeitstempel in Millisekunden im Jahr 58698, und der Aufruf endete mit 0.
+ */
+function zeitpunkt(wert, jetzt = Date.now()) {
   if (wert == null) return undefined;
-  if (/^\d+$/.test(wert)) return Number(wert);
-  const ms = Date.parse(wert);
-  if (Number.isNaN(ms)) throw new Error(`Zeitangabe nicht lesbar: ${wert}`);
-  return Math.floor(ms / 1000);
+  let sekunden;
+  if (/^\d+$/.test(wert)) {
+    sekunden = Number(wert);
+  } else {
+    const ms = Date.parse(wert);
+    if (Number.isNaN(ms)) throw new Aufruffehler(`Zeitangabe nicht lesbar: ${wert} (erwartet: Unix-Sekunden oder ISO-Zeit wie 2026-09-20T10:00:00+02:00)`);
+    sekunden = Math.floor(ms / 1000);
+  }
+  const spaetestens = Math.floor(jetzt / 1000) + 24 * 60 * 60;
+  if (sekunden < FRUEHESTENS || sekunden > spaetestens) {
+    const hinweis = /^\d{13}$/.test(wert) ? ' – Millisekunden? Erwartet sind Sekunden' : '';
+    throw new Aufruffehler(`Zeitangabe unplausibel: ${wert} wäre ${new Date(sekunden * 1000).toISOString()}${hinweis} (erlaubt: 1990 bis morgen)`);
+  }
+  return sekunden;
 }
 
 function konfiguration(flags) {
@@ -151,7 +173,7 @@ async function main() {
   const [befehl, erstes] = positional;
   if (flags.help || !befehl) { console.log(HILFE); return befehl ? 0 : 64; }
   // Vor allem anderen – auch vor dem Lesen des Keys: Was nicht zum Befehl passt, wird nicht still übergangen
-  const erlaubt = OPTIONEN[befehl];
+  const erlaubt = OPTIONEN.get(befehl);
   for (const name of Object.keys(flags)) {
     if (erlaubt && !erlaubt.has(name)) throw new Aufruffehler(`--${name} gilt nicht für „psalmio ${befehl}"`);
   }

@@ -1,5 +1,25 @@
 # Änderungen
 
+## 0.1.2 – 23.09.2026
+
+Aus dem Gegenlesen von Tim Fast (Stand `v0.1.1`):
+
+- **Befehlsnamen wie Eigenschaften des Objekt-Prototyps.** `psalmio constructor
+  --json` oder `psalmio __proto__ --json` endeten mit 1 und „erlaubt.has is not a
+  function" statt mit 64 – die Optionslisten je Befehl lagen in einem Objekt.
+  Jetzt eine `Map`.
+- **Zeiten werden geprüft.** `--at` und `--started-at` nahmen jeden Wert: „2026"
+  landete 1970, ein Zeitstempel in Millisekunden im Jahr 58698, der Aufruf
+  endete mit 0. Jetzt nur Unix-Sekunden oder ISO-Zeit zwischen 1990 und morgen;
+  alles andere endet mit 64, bevor Psalmio gefragt wird (bei Millisekunden mit
+  Hinweis). Eine unlesbare Zeitangabe endet ebenfalls mit 64 statt mit 1.
+- **README am Tag.** Am Tag `v0.1.1` stand in der README noch die
+  Installationszeile mit `#v0.1.0`; ab hier nennt sie die Fassung, in der sie
+  steht. Getaggte Stände werden nicht verschoben.
+- Richtiggestellt zu 0.1.1: Von den vier neuen Tests schlagen am alten Stand
+  drei an; der vierte hält das Fortsetzen fest, das schon richtig war, und trägt
+  am neuen Stand trotzdem.
+
 ## 0.1.1 – 23.09.2026
 
 Aus der Nachstellung von Tim Fast (Stand `ee98699`, getaggt als `v0.1.0`):

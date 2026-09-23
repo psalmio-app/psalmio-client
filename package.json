@@ -1,6 +1,6 @@
 {
   "name": "psalmio-client",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Aufnahmen und Startzeitpunkte nach Psalmio bringen – Bibliothek und Kommandozeile für die Videotechnik-Schnittstelle",
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/psalmio-app/psalmio-client.git" },

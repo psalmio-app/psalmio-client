@@ -55,8 +55,10 @@ ohne `--resume` beginnt von vorn (den halben Upload gibt er dabei zurück). Lieg
 die Aufnahme auf einem Laufwerk ohne Schreibrecht: `--state <datei>`.
 
 Optionen gehen als `--name wert` oder `--name=wert` und gelten nur für den Befehl,
-bei dem sie stehen. Unbekannte Optionen, eine Option am falschen Befehl und
-fehlende Werte enden mit Rückgabewert 64, statt still übergangen zu werden.
+bei dem sie stehen. Zeiten (`--at`, `--started-at`) als Unix-Sekunden oder ISO-Zeit,
+zwischen 1990 und morgen. Unbekannte Optionen, eine Option am falschen Befehl,
+fehlende Werte und unplausible Zeiten enden mit Rückgabewert 64, statt still
+übergangen zu werden.
 
 ### Ein ganzes Archiv: `psalmio batch`
 
@@ -215,7 +217,7 @@ automatisch die neueste. Wer damit live Gottesdienste steuert, will nicht, dass
 sich zwischen zwei Sonntagen etwas von selbst ändert.
 
 ```bash
-npm install github:psalmio-app/psalmio-client#v0.1.1
+npm install github:psalmio-app/psalmio-client#v0.1.2
 ```
 
 ## Entwicklung
