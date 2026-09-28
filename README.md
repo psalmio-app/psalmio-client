@@ -242,7 +242,7 @@ automatisch die neueste. Wer damit live Gottesdienste steuert, will nicht, dass
 sich zwischen zwei Sonntagen etwas von selbst ändert.
 
 ```bash
-npm install github:psalmio-app/psalmio-client#v0.1.2
+npm install github:psalmio-app/psalmio-client#v0.2.0
 ```
 
 ## Entwicklung

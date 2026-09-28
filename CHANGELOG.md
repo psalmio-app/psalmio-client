@@ -1,6 +1,6 @@
 # Änderungen
 
-## Unveröffentlicht
+## 0.2.0 – 29.09.2026
 
 - **Neu: `psalmio mcp`** – ein MCP-Server (Model Context Protocol) über
   stdin/stdout, mit dem ein KI-Assistent (Claude Desktop, Claude Code, andere
