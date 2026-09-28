@@ -1,5 +1,20 @@
 # Änderungen
 
+## Unveröffentlicht
+
+- **Neu: `psalmio mcp`** – ein MCP-Server (Model Context Protocol) über
+  stdin/stdout, mit dem ein KI-Assistent (Claude Desktop, Claude Code, andere
+  Clients) an der Psalmio-API arbeitet: Gottesdienste und Beiträge lesen und
+  ihre Stammdaten ändern, Transkripte holen, Dateien und Verarbeitungsstand
+  ansehen, Aufnahmen hochladen, eine Neuigkeit anlegen, Termine und
+  Hörstatistik lesen. Braucht einen Key mit der neuen Berechtigung „KI-Agent";
+  keine Werkzeuge zum Löschen, zu Mitgliedern oder Einstellungen. Ohne
+  Fremdabhängigkeiten wie der Rest. Einrichtung und Grenzen in `docs/MCP.md`.
+- Bibliothek: `mcp.createServer(config)` und `mcp.serve(config, { input, output })`;
+  `request(config, method, path, body)` für Aufrufe jenseits der
+  Videotechnik-Schnittstelle (`call` bleibt, wie es war).
+- Bestehende Befehle und Rückgabewerte sind unverändert.
+
 ## 0.1.2 – 23.09.2026
 
 Aus dem Gegenlesen von Tim Fast (Stand `v0.1.1`):

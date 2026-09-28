@@ -22,13 +22,25 @@ function isConfigured(config) {
 }
 
 /**
- * Ein Aufruf gegen Psalmio.
+ * Ein Aufruf gegen die Videotechnik-Schnittstelle (`path` relativ zu `API_PREFIX`).
  *
  * @param {{baseUrl: string, apiKey: string, tenantId?: string}} config
  * @param {{fetch?: typeof fetch, timeoutMs?: number}} [deps]
  * @returns {Promise<{ok: boolean, status?: number, data?: object, error?: string, code?: string, fromApi?: boolean}>}
  */
-async function call(config, method, path, body, deps = {}) {
+function call(config, method, path, body, deps = {}) {
+  return request(config, method, `${API_PREFIX}${path}`, body, deps);
+}
+
+/**
+ * Ein Aufruf gegen einen beliebigen Weg der Psalmio-API (`path` ab `/api/v1/…`).
+ *
+ * Für den MCP-Server, der über die Videotechnik-Schnittstelle hinaus
+ * Gottesdienste, Beiträge und Neuigkeiten liest und ändert. Dieselben Regeln
+ * wie `call`: nichts wirft, keine Umleitung, der Key geht nur an die
+ * geprüfte Adresse.
+ */
+async function request(config, method, path, body, deps = {}) {
   if (!isConfigured(config)) {
     return { ok: false, error: 'Psalmio ist nicht eingerichtet (Adresse oder API-Key fehlt).' };
   }
@@ -38,7 +50,7 @@ async function call(config, method, path, body, deps = {}) {
 
   const doFetch = deps.fetch || fetch;
   try {
-    const response = await doFetch(`${config.baseUrl}${API_PREFIX}${path}`, {
+    const response = await doFetch(`${config.baseUrl}${path}`, {
       method: method.toUpperCase(),
       headers: {
         'X-API-Key': config.apiKey,
@@ -190,6 +202,7 @@ function abortMultipart(config, eventId, { uploadId }, deps) {
 module.exports = {
   API_PREFIX,
   isConfigured,
+  request,
   isUnknownEvent,
   isTemporaryOutage,
   isUnknownEndpoint,

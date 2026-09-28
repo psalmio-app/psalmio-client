@@ -3,13 +3,17 @@
 > **In English:** A dependency-free Node library and command-line tool that lets a
 > church's video setup hand recordings and start times to
 > [Psalmio](https://psalmio.de), a media library for church services. Uploads are
-> chunked, resumable and never overwrite existing recordings. Docs and messages
+> chunked, resumable and never overwrite existing recordings. `psalmio mcp` is an
+> MCP server that lets an AI assistant work with the same API
+> ([`docs/MCP.md`](docs/MCP.md)). Docs and messages
 > are in German because that is where Psalmio's congregations are; error codes
 > and exit codes are language-neutral. The interface contract is in
 > [`docs/API.md`](docs/API.md).
 
 Aufnahmen und Startzeitpunkte nach [Psalmio](https://psalmio.de) bringen – als
 Node-Bibliothek und als Kommandozeilen-Werkzeug. Ohne Fremdabhängigkeiten.
+Dazu `psalmio mcp`, ein MCP-Server, über den ein KI-Assistent mit der Mediathek
+arbeitet ([`docs/MCP.md`](docs/MCP.md)).
 
 Psalmio ist die Mediathek, in der Gemeinden ihre Gottesdienste veröffentlichen.
 Wer die Aufnahme nicht von Hand im Editor hochladen will, hängt seine
@@ -109,6 +113,27 @@ Skript, wie es weitergeht:
 
 Den Key als Argument gibt es mit Absicht nicht: Argumente stehen für jeden
 Benutzer des Rechners lesbar in der Prozessliste.
+
+## KI-Assistenten: `psalmio mcp`
+
+Ein Server nach dem [Model Context Protocol](https://modelcontextprotocol.io)
+über stdin/stdout, für Claude Desktop, Claude Code und jeden anderen
+MCP-Client. Er braucht einen Key mit der Berechtigung **„KI-Agent"** –
+dieselben Umgebungsvariablen wie oben – und bietet zwölf Werkzeuge: Gottesdienste
+und Beiträge lesen und ihre Stammdaten ändern, Transkripte holen, Dateien und
+Verarbeitungsstand ansehen, Aufnahmen hochladen, eine Neuigkeit anlegen,
+Termine und Hörstatistik lesen.
+
+```json
+{ "mcpServers": { "psalmio": { "command": "psalmio", "args": ["mcp"],
+  "env": { "PSALMIO_URL": "https://gemeinde.psalmio.de", "PSALMIO_API_KEY": "sk-…" } } } }
+```
+
+Was der Key nicht darf, kann auch der Assistent nicht: keine Mitgliederdaten,
+nichts Löschendes, keine Einstellungen – dafür gibt es weder Werkzeuge noch
+Rechte, und jede Änderung steht in Psalmio im Protokoll des Keys. Inhalte der
+Gemeinde (Titel, Transkripte, Neuigkeiten) reicht der Server unverändert als
+Daten durch. Einrichtung, Werkzeuge und Grenzen: [`docs/MCP.md`](docs/MCP.md).
 
 ## Bibliothek
 

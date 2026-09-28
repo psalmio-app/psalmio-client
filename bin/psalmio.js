@@ -31,6 +31,7 @@ const HILFE = `psalmio – Aufnahmen und Startzeitpunkte nach Psalmio bringen
   psalmio batch <manifest.tsv> [--window 22:00-06:00] [--window-tz Europe/Berlin]
                                [--state <datei>] [--dry-run]
                                [--root-from /mnt/nas --root-to /Volumes/Videoteam]
+  psalmio mcp                  MCP-Server für KI-Assistenten über stdin/stdout (docs/MCP.md)
 
 upload merkt sich Kennung und Fingerabdruck der Datei (Pfad, Größe, Änderungszeit)
 in <datei>.psalmio-upload.json (oder --state), sobald Psalmio den Upload eröffnet hat.
@@ -49,6 +50,7 @@ also mitten in den Sonntagmorgen hinein. Die benutzte Zone steht beim Start dabe
 Einrichtung (Umgebungsvariablen):
   PSALMIO_URL       https://gemeinde.psalmio.de
   PSALMIO_API_KEY   aus Psalmio: Einstellungen → API-Keys, Berechtigung „Videotechnik"
+                    (für psalmio mcp: Berechtigung „KI-Agent")
   oder --url <adresse> und --key-file <datei mit dem key>
 
   --json            Ergebnis als JSON statt als Text
@@ -79,6 +81,8 @@ const OPTIONEN = new Map([
   ['start', new Set([...FUER_ALLE, 'at'])],
   ['upload', new Set([...FUER_ALLE, 'event', 'started-at', 'resume', 'state'])],
   ['batch', new Set([...FUER_ALLE, 'window', 'window-tz', 'state', 'dry-run', 'root-from', 'root-to'])],
+  // Kein --json: Auf stdout geht dort nur JSON-RPC
+  ['mcp', new Set(['help', 'url', 'key-file'])],
 ]);
 
 /**
@@ -201,6 +205,10 @@ async function main() {
   if (befehl === 'batch' && erstes) {
     genau(positional, 2);
     return stapel(config, erstes, flags);
+  }
+  if (befehl === 'mcp') {
+    genau(positional, 1);
+    return client.mcp.serve(config);
   }
 
   console.error(HILFE);

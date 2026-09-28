@@ -9,4 +9,5 @@ module.exports = {
   ...require('./put'),
   ...require('./recording'),
   ...require('./batch'),
+  mcp: require('./mcp'),
 };
