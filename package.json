@@ -1,7 +1,7 @@
 {
   "name": "psalmio-client",
-  "version": "0.2.0",
-  "description": "Aufnahmen und Startzeitpunkte nach Psalmio bringen – Bibliothek und Kommandozeile für die Videotechnik-Schnittstelle, dazu ein MCP-Server für KI-Assistenten",
+  "version": "0.3.0",
+  "description": "Aufnahmen und Startzeitpunkte nach Psalmio bringen – Bibliothek und Kommandozeile für die Videotechnik-Schnittstelle, dazu MCP-Server für KI-Assistenten an Psalmio und ChurchTools",
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/psalmio-app/psalmio-client.git" },
   "homepage": "https://github.com/psalmio-app/psalmio-client#readme",
@@ -13,5 +13,5 @@
   "scripts": {
     "test": "node --test test/*.test.js"
   },
-  "keywords": ["psalmio", "church", "gottesdienst", "upload", "churchtools", "mcp"]
+  "keywords": ["psalmio", "church", "gottesdienst", "upload", "churchtools", "mcp", "ablaufplan", "agenda"]
 }

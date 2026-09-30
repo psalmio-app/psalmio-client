@@ -1,5 +1,29 @@
 # Änderungen
 
+## 0.3.0 – 30.09.2026
+
+- **Neu: `psalmio churchtools-mcp`** – ein MCP-Server für das ChurchTools
+  einer Gemeinde, unabhängig von Psalmio. Ein KI-Assistent legt damit
+  Ablaufpläne an (aus Einträgen, einer Vorlage oder als Kopie – nie über einen
+  vorhandenen), ändert und verschiebt Einträge, sieht Termine, Dienste, Lieder,
+  Personen, Gruppen und Kalender nach, teilt Dienste ein und legt
+  Kalendereinträge an. Für alles Übrige sucht er in der API-Beschreibung, die
+  das ChurchTools selbst ausliefert, und ruft beliebige Wege auf. Er arbeitet
+  mit dem Login-Token einer Person (`CHURCHTOOLS_URL`, `CHURCHTOOLS_TOKEN`
+  oder `--token-file`) und in drei Stufen: `--read-only`, Vorgabe (ohne
+  Löschen), `--allow-delete`. Anmeldung und Zugangsdaten, Finanzen und das
+  Systemprotokoll sind in jeder Stufe gesperrt; Rechte, Systemeinstellungen,
+  Automatisierungen und Massenversand nur lesbar; Zustimmungen schreibt er für
+  niemanden. Zeiten ohne Versatz gelten als Ortszeit (`--timezone`, Vorgabe
+  `Europe/Berlin`), Antworten nennen Zulu- und Ortszeit. Einrichtung, Werkzeuge
+  und Grenzen in `docs/CHURCHTOOLS.md`.
+- Bibliothek: `churchtools.createServer(config)` und
+  `churchtools.serve(config, { input, output })`.
+- Das Protokoll beider Server steht jetzt in `src/mcp-core.js`; die Prüfung der
+  Eingaben kennt dabei feste Werte (`enum`), verschachtelte Objekte und Listen
+  von Objekten. `psalmio mcp` verhält sich unverändert.
+- Bestehende Befehle und Rückgabewerte sind unverändert.
+
 ## 0.2.0 – 29.09.2026
 
 - **Neu: `psalmio mcp`** – ein MCP-Server (Model Context Protocol) über

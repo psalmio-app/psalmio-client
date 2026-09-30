@@ -11,11 +11,11 @@
  * Einstellungen bleiben außen vor (Psalmio antwortet 403), und Werkzeuge
  * dafür gibt es hier gar nicht erst.
  *
- * Das Protokoll ist JSON-RPC 2.0, eine Nachricht je Zeile, ohne Fremdpaket wie
- * der Rest der Bibliothek: `initialize`, `notifications/initialized`, `ping`,
- * `tools/list`, `tools/call`. Auf stdout geht ausschließlich JSON-RPC; alles
- * andere (ein Satz beim Start, Fehler) geht auf stderr. Der API-Key steht in
- * keiner Antwort und in keiner Ausgabe.
+ * Das Protokoll (JSON-RPC 2.0, eine Nachricht je Zeile, ohne Fremdpaket wie der
+ * Rest der Bibliothek) steht in `mcp-core.js`; hier stehen die Werkzeuge. Auf
+ * stdout geht ausschließlich JSON-RPC; alles andere (ein Satz beim Start,
+ * Fehler) geht auf stderr. Der API-Key steht in keiner Antwort und in keiner
+ * Ausgabe.
  *
  * Fremder Text: Titel, Transkripte, Neuigkeiten und Termine stammen aus der
  * Gemeinde. Der Server gibt sie unverändert als Daten zurück und deutet nichts
@@ -24,15 +24,12 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const readline = require('node:readline');
 
 const api = require('./api');
 const { validateBaseUrl } = require('./address');
 const { uploadRecording } = require('./recording');
+const { PROTOKOLL_VERSIONEN, createHandler, anLeitung } = require('./mcp-core');
 const { version } = require('../package.json');
-
-// Neueste zuerst: Kennt der Client eine davon, bekommt er sie; sonst die neueste
-const PROTOKOLL_VERSIONEN = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
 const INSTRUCTIONS = [
   'Psalmio ist die Mediathek einer Kirchengemeinde. Die Werkzeuge lesen und ändern Gottesdienste, Beiträge, Neuigkeiten und Termine dieser einen Gemeinde.',
@@ -377,46 +374,7 @@ function zeitpunkt(wert) {
   return Number.isNaN(ms) ? undefined : Math.floor(ms / 1000);
 }
 
-// ── Eingaben prüfen ─────────────────────────────────────────────────
-
-const TYP_PASST = {
-  string: (w) => typeof w === 'string',
-  integer: (w) => Number.isInteger(w),
-  number: (w) => typeof w === 'number' && Number.isFinite(w),
-  boolean: (w) => typeof w === 'boolean',
-  array: (w) => Array.isArray(w),
-  object: (w) => w !== null && typeof w === 'object' && !Array.isArray(w),
-};
-
-/**
- * Passt die Eingabe zum Schema? Genug für die Schemata hier: Pflichtfelder,
- * Typen, unbekannte Felder, Elementtyp von Listen. Liefert die Mängel als Text
- * – der Agent bekommt sie als Fehlerergebnis und kann sich korrigieren.
- */
-function eingabeMaengel(schema, args) {
-  if (!TYP_PASST.object(args)) return ['arguments muss ein Objekt sein'];
-  const maengel = [];
-  for (const name of schema.required ?? []) {
-    if (!(name in args)) maengel.push(`${name} fehlt`);
-  }
-  for (const [name, wert] of Object.entries(args)) {
-    const feld = schema.properties?.[name];
-    if (!feld) {
-      if (schema.additionalProperties === false) maengel.push(`unbekanntes Feld ${name}`);
-      continue;
-    }
-    if (!TYP_PASST[feld.type]?.(wert)) maengel.push(`${name} muss vom Typ ${feld.type} sein`);
-    else if (feld.type === 'array' && feld.items?.type && !wert.every((e) => TYP_PASST[feld.items.type](e))) {
-      maengel.push(`${name}: jedes Element muss vom Typ ${feld.items.type} sein`);
-    }
-  }
-  return maengel;
-}
-
-// ── JSON-RPC ────────────────────────────────────────────────────────
-
-const rpcFehler = (id, code, message) => ({ jsonrpc: '2.0', id, error: { code, message } });
-const rpcErgebnis = (id, result) => ({ jsonrpc: '2.0', id, result });
+// ── Server ──────────────────────────────────────────────────────────
 
 /**
  * Der Server als reine Funktion: eine Nachricht hinein, eine Antwort heraus
@@ -427,58 +385,8 @@ const rpcErgebnis = (id, result) => ({ jsonrpc: '2.0', id, result });
  * @param {{fetch?: typeof fetch, timeoutMs?: number}} [deps]
  */
 function createServer(config, deps = {}) {
-  const werkzeuge = new Map(WERKZEUGE.map((w) => [w.name, w]));
-
-  async function handle(nachricht, { notify } = {}) {
-    if (!TYP_PASST.object(nachricht) || nachricht.jsonrpc !== '2.0' || typeof nachricht.method !== 'string') {
-      return rpcFehler(TYP_PASST.object(nachricht) ? nachricht.id ?? null : null, -32600, 'Invalid Request');
-    }
-    const { id, method, params = {} } = nachricht;
-    const benachrichtigung = id === undefined;
-
-    if (method.startsWith('notifications/')) return null;
-    if (benachrichtigung) return null; // eine Anfrage ohne id bekommt keine Antwort
-
-    if (method === 'initialize') {
-      const gewuenscht = params.protocolVersion;
-      return rpcErgebnis(id, {
-        protocolVersion: PROTOKOLL_VERSIONEN.includes(gewuenscht) ? gewuenscht : PROTOKOLL_VERSIONEN[0],
-        capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'psalmio', version },
-        instructions: INSTRUCTIONS,
-      });
-    }
-    if (method === 'ping') return rpcErgebnis(id, {});
-    if (method === 'tools/list') {
-      return rpcErgebnis(id, {
-        tools: WERKZEUGE.map(({ name, description, inputSchema, annotations }) => ({ name, description, inputSchema, annotations })),
-      });
-    }
-    if (method === 'tools/call') {
-      const werkzeug = werkzeuge.get(params.name);
-      if (!werkzeug) return rpcFehler(id, -32602, `Unbekanntes Werkzeug: ${params.name}`);
-      const args = params.arguments ?? {};
-      const maengel = eingabeMaengel(werkzeug.inputSchema, args);
-      if (maengel.length) return rpcErgebnis(id, ergebnis({ text: `Eingabe passt nicht: ${maengel.join('; ')}`, isError: true }));
-
-      const token = params._meta?.progressToken;
-      const progress = token !== undefined && notify
-        ? (prozent, text) => notify({ jsonrpc: '2.0', method: 'notifications/progress', params: { progressToken: token, progress: prozent, total: 100, message: text } })
-        : undefined;
-      try {
-        return rpcErgebnis(id, ergebnis(await werkzeug.run(args, { config, deps, progress })));
-      } catch (err) {
-        // Ein Fehler im Werkzeug selbst – die Meldung enthält keinen Key, der Key ist ein Header
-        return rpcErgebnis(id, ergebnis({ text: `Werkzeug gescheitert: ${err?.message ?? err}`, isError: true }));
-      }
-    }
-    return rpcFehler(id, -32601, `Unbekannte Methode: ${method}`);
-  }
-
-  return { handle, tools: WERKZEUGE.map((w) => w.name) };
+  return createHandler({ name: 'psalmio', version, instructions: INSTRUCTIONS, werkzeuge: WERKZEUGE, kontext: { config, deps } });
 }
-
-const ergebnis = ({ text, isError }) => ({ content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
 
 /**
  * Den Server an stdin/stdout hängen – eine JSON-RPC-Nachricht je Zeile.
@@ -499,35 +407,8 @@ async function serve(config, { input = process.stdin, output = process.stdout, s
     stderr.write(`psalmio mcp: ${invalid}\n`);
     return 64;
   }
-
-  const server = createServer(config, deps);
-  const schreiben = (nachricht) => {
-    try {
-      output.write(`${JSON.stringify(nachricht)}\n`);
-    } catch {
-      // Der Client ist weg – es gibt niemanden mehr, dem die Antwort fehlt
-    }
-  };
-  output.on?.('error', () => {});
   stderr.write(`psalmio mcp bereit – ${config.baseUrl}\n`);
-
-  const offen = new Set();
-  const leitung = readline.createInterface({ input, crlfDelay: Infinity });
-  for await (const zeile of leitung) {
-    if (!zeile.trim()) continue;
-    let nachricht;
-    try {
-      nachricht = JSON.parse(zeile);
-    } catch {
-      schreiben(rpcFehler(null, -32700, 'Parse error'));
-      continue;
-    }
-    const lauf = server.handle(nachricht, { notify: schreiben }).then((antwort) => { if (antwort) schreiben(antwort); });
-    offen.add(lauf);
-    lauf.finally(() => offen.delete(lauf));
-  }
-  await Promise.allSettled([...offen]);
-  return 0;
+  return anLeitung(createServer(config, deps), { input, output });
 }
 
 module.exports = { createServer, serve, PROTOKOLL_VERSIONEN };

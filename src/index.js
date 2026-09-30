@@ -10,4 +10,5 @@ module.exports = {
   ...require('./recording'),
   ...require('./batch'),
   mcp: require('./mcp'),
+  churchtools: require('./churchtools'),
 };

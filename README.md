@@ -5,15 +5,18 @@
 > [Psalmio](https://psalmio.de), a media library for church services. Uploads are
 > chunked, resumable and never overwrite existing recordings. `psalmio mcp` is an
 > MCP server that lets an AI assistant work with the same API
-> ([`docs/MCP.md`](docs/MCP.md)). Docs and messages
+> ([`docs/MCP.md`](docs/MCP.md)); `psalmio churchtools-mcp` does the same for a
+> church's ChurchTools – service plans, agendas, songs, calendars
+> ([`docs/CHURCHTOOLS.md`](docs/CHURCHTOOLS.md)). Docs and messages
 > are in German because that is where Psalmio's congregations are; error codes
 > and exit codes are language-neutral. The interface contract is in
 > [`docs/API.md`](docs/API.md).
 
 Aufnahmen und Startzeitpunkte nach [Psalmio](https://psalmio.de) bringen – als
 Node-Bibliothek und als Kommandozeilen-Werkzeug. Ohne Fremdabhängigkeiten.
-Dazu `psalmio mcp`, ein MCP-Server, über den ein KI-Assistent mit der Mediathek
-arbeitet ([`docs/MCP.md`](docs/MCP.md)).
+Dazu zwei MCP-Server für KI-Assistenten: `psalmio mcp` für die Mediathek
+([`docs/MCP.md`](docs/MCP.md)) und `psalmio churchtools-mcp` für das ChurchTools
+der Gemeinde ([`docs/CHURCHTOOLS.md`](docs/CHURCHTOOLS.md)).
 
 Psalmio ist die Mediathek, in der Gemeinden ihre Gottesdienste veröffentlichen.
 Wer die Aufnahme nicht von Hand im Editor hochladen will, hängt seine
@@ -135,6 +138,27 @@ Rechte, und jede Änderung steht in Psalmio im Protokoll des Keys. Inhalte der
 Gemeinde (Titel, Transkripte, Neuigkeiten) reicht der Server unverändert als
 Daten durch. Einrichtung, Werkzeuge und Grenzen: [`docs/MCP.md`](docs/MCP.md).
 
+## KI-Assistenten an ChurchTools: `psalmio churchtools-mcp`
+
+Derselbe Weg für das ChurchTools der Gemeinde, unabhängig von Psalmio: Der
+Assistent legt einen Ablaufplan aus einem Text, einer Tabelle oder einem Foto
+an, sieht Termine, Dienste und Lieder nach, teilt jemanden ein, legt
+Kalendereinträge an – und findet über die API-Beschreibung des ChurchTools
+alles Übrige. Er arbeitet mit dem Login-Token einer Person und genau ihren
+Rechten; am besten ein eigener Benutzer mit wenigen Rechten.
+
+```json
+{ "mcpServers": { "churchtools": { "command": "psalmio", "args": ["churchtools-mcp"],
+  "env": { "CHURCHTOOLS_URL": "https://gemeinde.church.tools", "CHURCHTOOLS_TOKEN": "…" } } } }
+```
+
+Ohne weitere Option liest und schreibt er, löscht aber nicht; `--read-only`
+lässt nur lesen, `--allow-delete` auch löschen. Anmeldung und Zugangsdaten,
+Finanzen und das Systemprotokoll bleiben in jeder Stufe gesperrt, Rechte und
+Systemeinstellungen nur lesbar. Ein Ablaufplan wird nie über einen vorhandenen
+gelegt. Einrichtung, Werkzeuge und Grenzen:
+[`docs/CHURCHTOOLS.md`](docs/CHURCHTOOLS.md).
+
 ## Bibliothek
 
 ```js
@@ -242,7 +266,7 @@ automatisch die neueste. Wer damit live Gottesdienste steuert, will nicht, dass
 sich zwischen zwei Sonntagen etwas von selbst ändert.
 
 ```bash
-npm install github:psalmio-app/psalmio-client#v0.2.0
+npm install github:psalmio-app/psalmio-client#v0.3.0
 ```
 
 ## Entwicklung

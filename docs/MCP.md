@@ -9,7 +9,8 @@ anlegen, Termine und Statistik lesen.
 
 Der Server spricht über stdin/stdout (JSON-RPC 2.0, eine Nachricht je Zeile)
 und braucht wie der Rest dieses Pakets keine Fremdabhängigkeiten: Node ≥ 18.17
-genügt.
+genügt. Für das ChurchTools der Gemeinde gibt es einen eigenen Server im selben
+Paket: `psalmio churchtools-mcp` ([`CHURCHTOOLS.md`](CHURCHTOOLS.md)).
 
 ## Der Schlüssel
 
@@ -42,7 +43,7 @@ Argument (Argumente stehen für jeden Benutzer des Rechners in der
 Prozessliste). Statt `PSALMIO_API_KEY` geht auch `--key-file <datei>`.
 
 ```bash
-npm install -g github:psalmio-app/psalmio-client#v0.1.2   # oder eine neuere Fassung
+npm install -g github:psalmio-app/psalmio-client#v0.3.0   # oder eine neuere Fassung
 ```
 
 ### Claude Desktop
@@ -65,7 +66,7 @@ Windows: `%APPDATA%\Claude\`):
 }
 ```
 
-Ohne globale Installation: `"command": "npx", "args": ["-y", "github:psalmio-app/psalmio-client#v0.1.2", "mcp"]`.
+Ohne globale Installation: `"command": "npx", "args": ["-y", "github:psalmio-app/psalmio-client#v0.3.0", "mcp"]`.
 
 ### Claude Code
 

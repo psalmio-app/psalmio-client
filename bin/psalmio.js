@@ -4,11 +4,14 @@
  *
  * Für Gemeinden ohne eigene Automatisierung: ein Aufnahme-PC und eine geplante
  * Aufgabe genügen. Und für Massen-Uploads alter Gottesdienste: eine Schleife
- * über `psalmio upload`.
+ * über `psalmio upload`. Dazu zwei MCP-Server für KI-Assistenten: `psalmio mcp`
+ * für die Mediathek, `psalmio churchtools-mcp` für das ChurchTools der Gemeinde.
  *
  * Adresse und Key kommen aus der Umgebung (PSALMIO_URL, PSALMIO_API_KEY) oder
- * aus einer Datei (--key-file). Den Key als Argument gibt es mit Absicht nicht:
- * Argumente stehen für jeden Benutzer des Rechners lesbar in der Prozessliste.
+ * aus einer Datei (--key-file); für ChurchTools ebenso (CHURCHTOOLS_URL,
+ * CHURCHTOOLS_TOKEN, --token-file). Key und Token als Argument gibt es mit
+ * Absicht nicht: Argumente stehen für jeden Benutzer des Rechners lesbar in der
+ * Prozessliste.
  *
  * Rückgabewerte – damit ein Skript darauf reagieren kann:
  *   0  erledigt
@@ -32,6 +35,8 @@ const HILFE = `psalmio – Aufnahmen und Startzeitpunkte nach Psalmio bringen
                                [--state <datei>] [--dry-run]
                                [--root-from /mnt/nas --root-to /Volumes/Videoteam]
   psalmio mcp                  MCP-Server für KI-Assistenten über stdin/stdout (docs/MCP.md)
+  psalmio churchtools-mcp      MCP-Server für das ChurchTools der Gemeinde (docs/CHURCHTOOLS.md)
+                               [--read-only | --allow-delete] [--timezone Europe/Berlin]
 
 upload merkt sich Kennung und Fingerabdruck der Datei (Pfad, Größe, Änderungszeit)
 in <datei>.psalmio-upload.json (oder --state), sobald Psalmio den Upload eröffnet hat.
@@ -53,6 +58,14 @@ Einrichtung (Umgebungsvariablen):
                     (für psalmio mcp: Berechtigung „KI-Agent")
   oder --url <adresse> und --key-file <datei mit dem key>
 
+Für psalmio churchtools-mcp:
+  CHURCHTOOLS_URL       https://gemeinde.church.tools
+  CHURCHTOOLS_TOKEN     Login-Token der Person, mit deren Rechten der Assistent arbeitet
+  CHURCHTOOLS_TIMEZONE  Ortszeit für Eingaben und Antworten (Vorgabe Europe/Berlin)
+  oder --url <adresse>, --token-file <datei mit dem token>, --timezone <zone>
+  Ohne weitere Option: lesen und schreiben, nicht löschen. --read-only: nur
+  lesen. --allow-delete: auch löschen.
+
   --json            Ergebnis als JSON statt als Text
 
 Optionen gehen als --name wert oder --name=wert und gelten nur beim Befehl,
@@ -63,8 +76,8 @@ ISO-Zeit, zwischen 1990 und morgen.
 /** Ein Aufruf, der so nicht gemeint sein kann – Rückgabewert 64. */
 class Aufruffehler extends Error {}
 
-const SCHALTER = new Set(['json', 'help', 'dry-run', 'resume']);
-const MIT_WERT = new Set(['event', 'at', 'started-at', 'url', 'key-file', 'window', 'window-tz', 'state', 'root-from', 'root-to']);
+const SCHALTER = new Set(['json', 'help', 'dry-run', 'resume', 'read-only', 'allow-delete']);
+const MIT_WERT = new Set(['event', 'at', 'started-at', 'url', 'key-file', 'window', 'window-tz', 'state', 'root-from', 'root-to', 'token-file', 'timezone']);
 
 /**
  * Welche Optionen jeder Befehl kennt. Eine bekannte Option am falschen Befehl
@@ -83,6 +96,7 @@ const OPTIONEN = new Map([
   ['batch', new Set([...FUER_ALLE, 'window', 'window-tz', 'state', 'dry-run', 'root-from', 'root-to'])],
   // Kein --json: Auf stdout geht dort nur JSON-RPC
   ['mcp', new Set(['help', 'url', 'key-file'])],
+  ['churchtools-mcp', new Set(['help', 'url', 'token-file', 'timezone', 'read-only', 'allow-delete'])],
 ]);
 
 /**
@@ -157,6 +171,23 @@ function konfiguration(flags) {
   };
 }
 
+/**
+ * Die Einrichtung für `psalmio churchtools-mcp`. Der Modus steht in der
+ * Konfiguration des Assistenten (`"args": ["churchtools-mcp", "--read-only"]`),
+ * damit er sich nicht aus Versehen über eine Umgebungsvariable ändert.
+ */
+function churchtoolsKonfiguration(flags) {
+  if (flags['read-only'] && flags['allow-delete']) throw new Aufruffehler('--read-only und --allow-delete schließen sich aus');
+  let token = process.env.CHURCHTOOLS_TOKEN || '';
+  if (flags['token-file']) token = fs.readFileSync(flags['token-file'], 'utf8').trim();
+  return {
+    baseUrl: client.churchtools.normalisiereAdresse(flags.url || process.env.CHURCHTOOLS_URL),
+    token,
+    modus: flags['read-only'] ? 'lesen' : flags['allow-delete'] ? 'loeschen' : 'schreiben',
+    zeitzone: flags.timezone || process.env.CHURCHTOOLS_TIMEZONE || 'Europe/Berlin',
+  };
+}
+
 function ende(result, flags, text, hinweis) {
   if (flags.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -180,6 +211,11 @@ async function main() {
   const erlaubt = OPTIONEN.get(befehl);
   for (const name of Object.keys(flags)) {
     if (erlaubt && !erlaubt.has(name)) throw new Aufruffehler(`--${name} gilt nicht für „psalmio ${befehl}"`);
+  }
+  // Vor der Psalmio-Einrichtung: Hier gehört --url zu ChurchTools, und ein Psalmio-Key wird nicht gebraucht
+  if (befehl === 'churchtools-mcp') {
+    genau(positional, 1);
+    return client.churchtools.serve(churchtoolsKonfiguration(flags));
   }
   const config = konfiguration(flags);
 
