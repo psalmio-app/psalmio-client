@@ -150,7 +150,7 @@ function alsEintrag(z, e, position) {
 const FEHLER_401 = { message: 'Session expired!', translatedMessage: 'Die Session ist abgelaufen, bitte logge dich erneut ein.', messageKey: 'exception.unauthorized', args: [], errors: [] };
 const FEHLER_404 = { message: 'Resource not found', translatedMessage: 'Nicht gefunden.', messageKey: 'exception.not_found', args: [], errors: [] };
 
-async function mitChurchTools(run, { modus = 'schreiben', zeitzone = 'Europe/Berlin', token = TOKEN } = {}) {
+async function mitChurchTools(run, { modus = 'schreiben', probe = false, zeitzone = 'Europe/Berlin', token = TOKEN } = {}) {
   const z = neuerStand();
   const server = http.createServer(async (req, res) => {
     const json = (status, body, kopf = {}) => { res.writeHead(status, { 'Content-Type': 'application/json', ...kopf }); res.end(JSON.stringify(body)); };
@@ -319,7 +319,7 @@ async function mitChurchTools(run, { modus = 'schreiben', zeitzone = 'Europe/Ber
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   try {
-    const config = { baseUrl: `http://127.0.0.1:${server.address().port}`, token, modus, zeitzone };
+    const config = { baseUrl: `http://127.0.0.1:${server.address().port}`, token, modus, probe, zeitzone };
     const ct = createServer(config, { sleep: async (ms) => { z.geschlafen.push(ms); } });
     return await run(ct, z, config);
   } finally {
@@ -346,12 +346,22 @@ test('initialize: Name churchtools, Anweisungen nennen Modus, Zeitzone und dass 
   assert.match(antwort.result.instructions, /Europe\/Berlin/);
   assert.doesNotMatch(antwort.result.instructions, /ct_create_agenda/, 'lesend gibt es kein Anlegen – die Anweisungen sprechen nicht davon');
 
-  const schreibend = createServer({ baseUrl: 'https://g.church.tools', token: TOKEN, zeitzone: 'Europe/Vienna' });
+  const schreibend = createServer({ baseUrl: 'https://g.church.tools', token: TOKEN, modus: 'schreiben', zeitzone: 'Europe/Vienna' });
   const zweite = await schreibend.handle(anfrage(1, 'initialize', { protocolVersion: '2024-11-05' }));
   assert.equal(zweite.result.protocolVersion, '2024-11-05');
   assert.match(zweite.result.instructions, /ohne Löschen/);
   assert.match(zweite.result.instructions, /ct_create_agenda/);
   assert.match(zweite.result.instructions, /Europe\/Vienna/);
+});
+
+test('ohne Angabe liest der Server nur – geschrieben wird erst mit ausdrücklichem Modus', async () => {
+  const ohne = createServer({ baseUrl: 'https://g.church.tools', token: TOKEN });
+  const werkzeuge = (await ohne.handle(anfrage(1, 'tools/list'))).result.tools;
+  assert.equal(werkzeuge.length, 17);
+  assert.ok(werkzeuge.every((w) => w.annotations.readOnlyHint));
+  const anweisung = (await ohne.handle(anfrage(2, 'initialize', { protocolVersion: '2025-06-18' }))).result.instructions;
+  assert.match(anweisung, /nur lesen/);
+  assert.match(anweisung, /saubere Struktur zurück, die ein Mensch in ChurchTools einträgt/);
 });
 
 test('der Modus bestimmt, was angeboten wird: lesend 17 Werkzeuge, schreibend 24, mit Löschen 26', async () => {
@@ -421,6 +431,9 @@ test('verboten: Zugangsdaten und Finanzen nie, Einstellungen nur lesend, Lösche
   assert.match(verboten('DELETE', seg('/events/12/agenda'), 'schreiben'), /--allow-delete/);
   assert.match(verboten('POST', seg('/persons/5/merge/6'), 'schreiben'), /--allow-delete/, 'Zusammenführen löscht eine Person');
   assert.equal(verboten('DELETE', seg('/events/12/agenda'), 'loeschen'), null);
+  // Den ganzen Plan ersetzt ChurchTools als Ganzes – dabei verschwanden bei der MBG Lemgo sechs Lieder
+  assert.match(verboten('PUT', seg('/events/12/agenda'), 'loeschen'), /ct_create_agenda/);
+  assert.equal(verboten('PUT', seg('/events/12/agenda/items/5'), 'schreiben'), null, 'ein einzelner Eintrag geht');
 });
 
 // ── Verbindung und Fehler ─────────────────────────────────────────────
@@ -874,6 +887,7 @@ test('ct_api_write: schreibend POST ja – Löschen, Rechte, Zusammenführen und
       ['POST', '/persons/7/privacypolicy', /Zustimmung/],
       ['POST', '/login', /Zugangsdaten/],
       ['PATCH', '/persons/7/password', /Zugangsdaten/],
+      ['PUT', '/events/12/agenda', /ct_create_agenda/],
     ]) {
       const antwort = await aufruf(ct, 'ct_api_write', { method, path: pfad, body: {} });
       assert.equal(antwort.result.isError, true, `${method} ${pfad}`);
@@ -901,6 +915,43 @@ test('der Login-Token steht in keiner Antwort – über alle Werkzeuge hinweg', 
     ];
     assert.doesNotMatch(JSON.stringify(alle), new RegExp(TOKEN));
   }, { modus: 'loeschen' });
+});
+
+// ── Probemodus ────────────────────────────────────────────────────────
+
+test('Probemodus: schreibende Werkzeuge prüfen und lesen wie sonst, schicken aber nichts', async () => {
+  await mitChurchTools(async (ct, z) => {
+    const liste = (await ct.handle(anfrage(1, 'tools/list'))).result.tools;
+    assert.equal(liste.length, 24);
+    assert.match(liste.find((w) => w.name === 'ct_create_agenda').description, /PROBEMODUS/);
+
+    const plan = await aufruf(ct, 'ct_create_agenda', { event_id: 13, items: [{ title: 'Begrüßung', duration_minutes: 5 }, { type: 'song', arrangement_id: 77 }] });
+    assert.equal(plan.result.isError, undefined, text(plan));
+    assert.match(text(plan), /^PROBEMODUS – nichts an ChurchTools gesendet\. Dieser Aufruf hätte 1 Änderung\(en\) geschickt:/);
+    assert.match(text(plan), /1\. PUT \/events\/13\/agenda\n {3}\{"calendarId":2,"items":\[\{"type":"text","title":"Begrüßung","duration":300\}/);
+
+    const mehr = await aufruf(ct, 'ct_add_agenda_items', { event_id: 12, items: [{ title: 'Segen' }, { title: 'Ausgang' }] });
+    assert.match(text(mehr), /hätte 2 Änderung\(en\)/);
+    assert.match(text(mehr), /1\. POST \/events\/12\/agenda\/items\?after_id=1003/);
+
+    // Was eine Prüfung ablehnt, bleibt ein Fehler – geplant wird da nichts
+    const vorhanden = await aufruf(ct, 'ct_create_agenda', { event_id: 12, items: [{ title: 'x' }] });
+    assert.equal(vorhanden.result.isError, true);
+    assert.match(text(vorhanden), /hat schon einen Ablaufplan/);
+
+    const termin = await aufruf(ct, 'ct_create_appointment', { calendar_id: 2, title: 'Probe', start: '2026-10-04T10:00', end: '2026-10-04T11:00' });
+    assert.match(text(termin), /POST \/calendars\/2\/appointments/);
+
+    assert.equal(schreibende(z).length, 0, 'nichts Schreibendes hat ChurchTools erreicht');
+    assert.ok(z.anfragen.some((a) => a.path === '/api/events/13/agenda'), 'gelesen wurde wie sonst');
+  }, { probe: true });
+});
+
+test('Probemodus ohne Schreibrecht: ein Probelauf bietet die Schreibwerkzeuge trotzdem an', async () => {
+  const probe = createServer({ baseUrl: 'https://g.church.tools', token: TOKEN, probe: true });
+  const init = await probe.handle(anfrage(1, 'initialize', { protocolVersion: '2025-06-18' }));
+  assert.match(init.result.instructions, /im Probemodus: nichts wird gesendet/);
+  assert.equal((await probe.handle(anfrage(2, 'tools/list'))).result.tools.length, 24);
 });
 
 // ── Einrichtung und Kommandozeile ─────────────────────────────────────
@@ -952,6 +1003,37 @@ test('psalmio churchtools-mcp --read-only: nur JSON-RPC auf stdout, lesende Werk
   });
 });
 
+test('psalmio churchtools-mcp: ohne Option nur lesen, --allow-write schreibt, --dry-run zeigt nur', async () => {
+  await mitChurchTools(async (_ct, z, config) => {
+    const env = { CHURCHTOOLS_URL: config.baseUrl, CHURCHTOOLS_TOKEN: TOKEN };
+    const zeilen = [
+      JSON.stringify(anfrage(1, 'tools/list')),
+      JSON.stringify(anfrage(2, 'tools/call', { name: 'ct_check_connection', arguments: {} })),
+    ];
+    // Anfragen laufen nebeneinander – die Antworten kommen in keiner festen Reihenfolge
+    const nachId = (out) => out.trim().split('\n').map((zeile) => JSON.parse(zeile)).sort((a, b) => a.id - b.id);
+    const ohne = await ueberStdio([], env, zeilen);
+    const [liste, verbindung] = nachId(ohne.out);
+    assert.equal(liste.result.tools.length, 17);
+    assert.match(verbindung.result.content[0].text, /Dieser Server darf: nur lesen/);
+
+    const schreiben = await ueberStdio(['--allow-write'], env, zeilen);
+    assert.equal(nachId(schreiben.out)[0].result.tools.length, 24);
+    assert.match(schreiben.err, /lesen und schreiben, ohne Löschen, Zeitzone/);
+
+    const probe = await ueberStdio(['--dry-run'], env, [
+      ...zeilen,
+      JSON.stringify(anfrage(3, 'tools/call', { name: 'ct_add_agenda_items', arguments: { event_id: 12, items: [{ title: 'Segen' }] } })),
+    ]);
+    const antworten = nachId(probe.out);
+    assert.equal(antworten[0].result.tools.length, 24);
+    assert.match(antworten[1].result.content[0].text, /im Probemodus: nichts wird gesendet/);
+    assert.match(antworten[2].result.content[0].text, /^PROBEMODUS/);
+    assert.match(probe.err, /im Probemodus: nichts wird gesendet/);
+    assert.equal(schreibende(z).length, 0);
+  });
+});
+
 test('psalmio churchtools-mcp endet mit 64, wenn die Einrichtung nicht stimmt – bevor irgendetwas läuft', async () => {
   const ohneToken = await ueberStdio([], { CHURCHTOOLS_URL: 'https://gemeinde.church.tools' }, [JSON.stringify(anfrage(1, 'ping'))]);
   assert.equal(ohneToken.code, 64);
@@ -964,7 +1046,7 @@ test('psalmio churchtools-mcp endet mit 64, wenn die Einrichtung nicht stimmt �
 
   const beides = await ueberStdio(['--read-only', '--allow-delete'], { CHURCHTOOLS_URL: 'https://gemeinde.church.tools', CHURCHTOOLS_TOKEN: TOKEN }, []);
   assert.equal(beides.code, 64);
-  assert.match(beides.err, /schließen sich aus/);
+  assert.match(beides.err, /--read-only schließt --allow-write, --allow-delete und --dry-run aus/);
 
   const zone = await ueberStdio(['--timezone', 'Mars/Olympus'], { CHURCHTOOLS_URL: 'https://gemeinde.church.tools', CHURCHTOOLS_TOKEN: TOKEN }, []);
   assert.equal(zone.code, 64);

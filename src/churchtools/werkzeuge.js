@@ -36,7 +36,42 @@ const kurz = (text, laenge) => {
 };
 const begrenzt = (text, hoechstens, hinweis) => (text.length > hoechstens ? `${text.slice(0, hoechstens)}\n… gekürzt (${text.length} Zeichen). ${hinweis}` : text);
 
-const ct = (ctx, methode, pfad, anfrage) => api.request(ctx.config, methode, pfad, anfrage, ctx.deps);
+/**
+ * Ein Aufruf an ChurchTools. Im Probemodus (`ctx.geplant` ist eine Liste) geht
+ * nur Lesendes hinaus; alles andere wird aufgeschrieben und mit einer
+ * erfundenen, harmlosen Antwort beantwortet, damit das Werkzeug zu Ende läuft
+ * und zeigen kann, was es geschickt hätte (`probeText`).
+ */
+function ct(ctx, methode, pfad, anfrage = {}) {
+  if (ctx.geplant && methode.toLowerCase() !== 'get') {
+    ctx.geplant.push({ methode: methode.toUpperCase(), pfad, query: anfrage.query, body: anfrage.body });
+    return Promise.resolve({ ok: true, status: 200, data: probeAntwort(pfad, anfrage.body, ctx.geplant.length), probe: true });
+  }
+  return api.request(ctx.config, methode, pfad, anfrage, ctx.deps);
+}
+
+/** Genug Antwort, dass ein Werkzeug im Probemodus weiterrechnen kann – negative Kennungen, damit nichts echt aussieht. */
+function probeAntwort(pfad, body, nummer) {
+  if (/\/agenda$/.test(pfad)) {
+    return { id: null, items: (body?.items ?? []).map((e, i) => ({ ...e, id: -(i + 1), position: i })) };
+  }
+  if (body && typeof body === 'object' && !Array.isArray(body)) return { ...body, id: -nummer };
+  return null;
+}
+
+/** Was ein Werkzeug im Probemodus geschickt hätte, zum Lesen. */
+function probeText(geplant) {
+  const zeilen = geplant.map((g, i) => {
+    const abfrage = api.abfrageText(g.query);
+    const koerper = g.body === undefined ? '' : `\n   ${kurz(JSON.stringify(g.body), 4000)}`;
+    return `${i + 1}. ${g.methode} ${g.pfad}${abfrage}${koerper}`;
+  });
+  return [
+    `PROBEMODUS – nichts an ChurchTools gesendet. Dieser Aufruf hätte ${geplant.length} Änderung(en) geschickt:`,
+    ...zeilen,
+    'Wirklich schreiben kann der Server erst ohne --dry-run (mit --allow-write).',
+  ].join('\n');
+}
 
 /** Ein gescheiterter Aufruf als Werkzeug-Ergebnis – mit der Meldung von ChurchTools, damit der Assistent reagieren kann. */
 function fehler(result, vorspann) {
@@ -324,7 +359,8 @@ const WERKZEUGE = [
       const info = await ct(ctx, 'get', '/info');
       const fassung = info.ok && info.data?.version ? ` ${info.data.version}` : '';
       const gemeinde = info.ok && (info.data?.siteName || info.data?.shortName) ? ` („${info.data.siteName || info.data.shortName}“)` : '';
-      const darf = { lesen: 'nur lesen', schreiben: 'lesen und schreiben, ohne Löschen', loeschen: 'lesen, schreiben und löschen' }[ctx.config.modus];
+      const darf = { lesen: 'nur lesen', schreiben: 'lesen und schreiben, ohne Löschen', loeschen: 'lesen, schreiben und löschen' }[ctx.config.modus]
+        + (ctx.config.probe ? ', im Probemodus: nichts wird gesendet' : '');
       return {
         text: `Verbunden mit ChurchTools${fassung}${gemeinde} als ${personName(ich.data) ?? 'unbekannt'} (Person ${ich.data?.id ?? '?'}). `
           + `Dieser Server darf: ${darf}. Ortszeiten stehen in ${ctx.config.zeitzone}.`,
@@ -1169,4 +1205,23 @@ function werkzeugeFuer(modus) {
   return WERKZEUGE.filter((w) => STUFEN[w.stufe] <= STUFEN[modus]);
 }
 
-module.exports = { WERKZEUGE, werkzeugeFuer, zuZulu, ortszeit };
+/**
+ * Die Werkzeuge im Probemodus: Schreibende laufen wie sonst – mit allen
+ * Prüfungen und Lesezugriffen –, schicken aber nichts. Statt ihres Ergebnisses
+ * kommt die Liste dessen, was sie geschickt hätten. Hat ein Werkzeug gar nichts
+ * geplant (etwa weil eine Prüfung scheiterte), bleibt sein eigenes Ergebnis.
+ */
+function mitProbe(werkzeug) {
+  if (werkzeug.stufe === 'lesen') return werkzeug;
+  return {
+    ...werkzeug,
+    description: `${werkzeug.description} PROBEMODUS: Schickt nichts, sondern zeigt, was geschickt würde.`,
+    async run(args, ctx) {
+      const geplant = [];
+      const ergebnis = await werkzeug.run(args, { ...ctx, geplant });
+      return geplant.length ? { text: probeText(geplant) } : ergebnis;
+    },
+  };
+}
+
+module.exports = { WERKZEUGE, werkzeugeFuer, mitProbe, zuZulu, ortszeit };

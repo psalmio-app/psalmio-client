@@ -36,7 +36,7 @@ const HILFE = `psalmio – Aufnahmen und Startzeitpunkte nach Psalmio bringen
                                [--root-from /mnt/nas --root-to /Volumes/Videoteam]
   psalmio mcp                  MCP-Server für KI-Assistenten über stdin/stdout (docs/MCP.md)
   psalmio churchtools-mcp      MCP-Server für das ChurchTools der Gemeinde (docs/CHURCHTOOLS.md)
-                               [--read-only | --allow-delete] [--timezone Europe/Berlin]
+                               [--allow-write | --allow-delete] [--dry-run] [--timezone Europe/Berlin]
 
 upload merkt sich Kennung und Fingerabdruck der Datei (Pfad, Größe, Änderungszeit)
 in <datei>.psalmio-upload.json (oder --state), sobald Psalmio den Upload eröffnet hat.
@@ -63,8 +63,10 @@ Für psalmio churchtools-mcp:
   CHURCHTOOLS_TOKEN     Login-Token der Person, mit deren Rechten der Assistent arbeitet
   CHURCHTOOLS_TIMEZONE  Ortszeit für Eingaben und Antworten (Vorgabe Europe/Berlin)
   oder --url <adresse>, --token-file <datei mit dem token>, --timezone <zone>
-  Ohne weitere Option: lesen und schreiben, nicht löschen. --read-only: nur
-  lesen. --allow-delete: auch löschen.
+  Ohne weitere Option: nur lesen. --allow-write: auch schreiben (nicht löschen),
+  --allow-delete: auch löschen. --dry-run: Probemodus – die schreibenden Werkzeuge
+  zeigen nur, was sie schicken würden. Der Token braucht ein eigenes Dienstkonto
+  mit wenigen Rechten, nicht das Konto eines Mitarbeiters (docs/CHURCHTOOLS.md).
 
   --json            Ergebnis als JSON statt als Text
 
@@ -76,7 +78,7 @@ ISO-Zeit, zwischen 1990 und morgen.
 /** Ein Aufruf, der so nicht gemeint sein kann – Rückgabewert 64. */
 class Aufruffehler extends Error {}
 
-const SCHALTER = new Set(['json', 'help', 'dry-run', 'resume', 'read-only', 'allow-delete']);
+const SCHALTER = new Set(['json', 'help', 'dry-run', 'resume', 'read-only', 'allow-write', 'allow-delete']);
 const MIT_WERT = new Set(['event', 'at', 'started-at', 'url', 'key-file', 'window', 'window-tz', 'state', 'root-from', 'root-to', 'token-file', 'timezone']);
 
 /**
@@ -96,7 +98,7 @@ const OPTIONEN = new Map([
   ['batch', new Set([...FUER_ALLE, 'window', 'window-tz', 'state', 'dry-run', 'root-from', 'root-to'])],
   // Kein --json: Auf stdout geht dort nur JSON-RPC
   ['mcp', new Set(['help', 'url', 'key-file'])],
-  ['churchtools-mcp', new Set(['help', 'url', 'token-file', 'timezone', 'read-only', 'allow-delete'])],
+  ['churchtools-mcp', new Set(['help', 'url', 'token-file', 'timezone', 'read-only', 'allow-write', 'allow-delete', 'dry-run'])],
 ]);
 
 /**
@@ -173,17 +175,24 @@ function konfiguration(flags) {
 
 /**
  * Die Einrichtung für `psalmio churchtools-mcp`. Der Modus steht in der
- * Konfiguration des Assistenten (`"args": ["churchtools-mcp", "--read-only"]`),
+ * Konfiguration des Assistenten (`"args": ["churchtools-mcp", "--allow-write"]`),
  * damit er sich nicht aus Versehen über eine Umgebungsvariable ändert.
+ *
+ * Vorgabe ist seit 0.4.0 „nur lesen“: Ein Token kann in ChurchTools alles, was
+ * seine Person kann (seit August 2026 gibt es keine abgestuften Token-Rechte
+ * mehr), und ein öffentlicher Server soll nicht von selbst schreiben (Tim Fast).
  */
 function churchtoolsKonfiguration(flags) {
-  if (flags['read-only'] && flags['allow-delete']) throw new Aufruffehler('--read-only und --allow-delete schließen sich aus');
+  if (flags['read-only'] && (flags['allow-write'] || flags['allow-delete'] || flags['dry-run'])) {
+    throw new Aufruffehler('--read-only schließt --allow-write, --allow-delete und --dry-run aus');
+  }
   let token = process.env.CHURCHTOOLS_TOKEN || '';
   if (flags['token-file']) token = fs.readFileSync(flags['token-file'], 'utf8').trim();
   return {
     baseUrl: client.churchtools.normalisiereAdresse(flags.url || process.env.CHURCHTOOLS_URL),
     token,
-    modus: flags['read-only'] ? 'lesen' : flags['allow-delete'] ? 'loeschen' : 'schreiben',
+    modus: flags['allow-delete'] ? 'loeschen' : flags['allow-write'] || flags['dry-run'] ? 'schreiben' : 'lesen',
+    probe: Boolean(flags['dry-run']),
     zeitzone: flags.timezone || process.env.CHURCHTOOLS_TIMEZONE || 'Europe/Berlin',
   };
 }

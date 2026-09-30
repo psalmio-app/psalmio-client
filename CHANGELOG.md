@@ -1,5 +1,27 @@
 # Änderungen
 
+## 0.4.0 – 30.09.2026
+
+Aus der Rückmeldung von Tim Fast (Videotechnik der MBG Lemgo) zu 0.3.0:
+
+- **`psalmio churchtools-mcp` liest ohne Angabe nur.** Schreiben muss mit
+  `--allow-write` eingeschaltet werden, Löschen weiter mit `--allow-delete`.
+  Grund: Ein ChurchTools-Token kann alles, was seine Person kann, und ein
+  öffentlicher Server soll nicht von selbst schreiben. Wer 0.3.0 ohne Schalter
+  schreibend betrieben hat, ergänzt `--allow-write`. `--read-only` gibt es weiter.
+- **Neu: Probemodus `--dry-run`.** Die schreibenden Werkzeuge prüfen und lesen wie
+  sonst, schicken aber nichts und zeigen stattdessen, was sie geschickt hätten.
+- **Kein Ersetzen ganzer Ablaufpläne über `ct_api_write`.** `PUT /events/{id}/agenda`
+  ersetzt in ChurchTools den kompletten Plan; bei einer Messung der MBG Lemgo
+  verschwanden dabei sechs Lieder. `ct_create_agenda` legt weiter nur an, wo es
+  noch keinen Plan gibt.
+- Doku: eigenes Dienstkonto mit wenigen Rechten statt des Kontos eines
+  Mitarbeiters, erst lesend, dann Probemodus, Termine zuerst in einem
+  Testkalender; lesend liefert der Assistent einen Ablauf als Struktur, die ein
+  Mensch einträgt.
+- `churchtools.createServer(config)` liest ohne `modus` nur; `probe: true`
+  schaltet den Probemodus ein.
+
 ## 0.3.0 – 30.09.2026
 
 - **Neu: `psalmio churchtools-mcp`** – ein MCP-Server für das ChurchTools

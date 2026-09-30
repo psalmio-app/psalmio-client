@@ -152,8 +152,9 @@ Rechten; am besten ein eigener Benutzer mit wenigen Rechten.
   "env": { "CHURCHTOOLS_URL": "https://gemeinde.church.tools", "CHURCHTOOLS_TOKEN": "…" } } } }
 ```
 
-Ohne weitere Option liest und schreibt er, löscht aber nicht; `--read-only`
-lässt nur lesen, `--allow-delete` auch löschen. Anmeldung und Zugangsdaten,
+Ohne weitere Option liest er nur; `--allow-write` lässt ihn schreiben,
+`--allow-delete` auch löschen, und `--dry-run` zeigt nur, was er schicken würde.
+Der Token gehört an ein eigenes Dienstkonto mit wenigen Rechten. Anmeldung und Zugangsdaten,
 Finanzen und das Systemprotokoll bleiben in jeder Stufe gesperrt, Rechte und
 Systemeinstellungen nur lesbar. Ein Ablaufplan wird nie über einen vorhandenen
 gelegt. Einrichtung, Werkzeuge und Grenzen:
@@ -266,7 +267,7 @@ automatisch die neueste. Wer damit live Gottesdienste steuert, will nicht, dass
 sich zwischen zwei Sonntagen etwas von selbst ändert.
 
 ```bash
-npm install github:psalmio-app/psalmio-client#v0.3.0
+npm install github:psalmio-app/psalmio-client#v0.4.0
 ```
 
 ## Entwicklung

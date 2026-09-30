@@ -16,8 +16,10 @@ Fremdabhängigkeiten – Node ≥ 18.17 genügt.
 
 ## Was man damit tut
 
-- „Hier ist der Ablauf für Sonntag“ – als Text, Tabelle oder Foto –
-  „leg ihn in ChurchTools an.“
+- „Hier ist der Ablauf der Hochzeit“ – als Text, Tabelle oder Foto – „mach
+  daraus eine saubere Struktur für ChurchTools.“ Lesend liefert der Assistent
+  die Einträge, ein Mensch trägt sie ein; mit `--allow-write` legt er sie
+  selbst an.
 - „Wer ist am 11. Oktober für die Technik eingeteilt, und wer könnte noch?“
 - „Trag Carl für die Technik am Sonntag ein.“
 - „Welche Lieder hatten wir in den letzten vier Wochen?“
@@ -30,10 +32,12 @@ Der Assistent arbeitet als **eine Person** in ChurchTools – mit ihrem
 Login-Token und genau ihren Rechten. Was diese Person nicht darf, darf der
 Assistent auch nicht; ChurchTools selbst setzt diese Grenze.
 
-Deshalb am besten **einen eigenen Benutzer** anlegen, etwa „KI-Assistent“, und
-ihm nur die Rechte geben, die er braucht – zum Beispiel Dienstplanung und
-Ablaufpläne bearbeiten, Kalender und Lieder lesen. Nicht den Token eines Admins
-nehmen: Der Assistent könnte dann alles, was der Admin kann.
+Deshalb gehört er an **ein eigenes Dienstkonto** mit wenigen Gruppenrechten,
+etwa „KI-Assistent“ – nicht an das Konto eines Mitarbeiters und schon gar nicht
+an das eines Admins. Abgestufte Rechte für Tokens gibt es in ChurchTools nicht
+(mehr): Ein Token kann alles, was seine Person kann. Das Dienstkonto bekommt nur,
+was die Aufgabe braucht – zum Lesen etwa Dienstplanung, Kalender und Lieder, zum
+Schreiben dazu Ablaufpläne einer Gruppe von Terminen.
 
 Den Token findet man in ChurchTools im Profil des Benutzers. Er funktioniert
 auch, wenn für das Konto die Zwei-Faktor-Anmeldung aktiv ist. Er gehört in die
@@ -43,13 +47,21 @@ Prozessliste. Wer den Token in ChurchTools neu erzeugt, sperrt den alten.
 
 ## Was der Server darf
 
-Drei Stufen, festgelegt beim Start:
+Drei Stufen, festgelegt beim Start – **ohne Angabe nur lesen**:
 
 | Aufruf | darf | Werkzeuge |
 |---|---|---|
-| `psalmio churchtools-mcp --read-only` | nur lesen | 17 |
-| `psalmio churchtools-mcp` | lesen und schreiben, **ohne Löschen** | 24 |
+| `psalmio churchtools-mcp` | nur lesen | 17 |
+| `psalmio churchtools-mcp --allow-write` | lesen und schreiben, **ohne Löschen** | 24 |
 | `psalmio churchtools-mcp --allow-delete` | auch löschen | 26 |
+| `… --dry-run` | **Probemodus:** die schreibenden Werkzeuge prüfen und lesen wie sonst, schicken aber nichts, sondern zeigen, was sie schicken würden | 24 bzw. 26 |
+
+Bis 0.3.0 war Schreiben die Vorgabe. Seit 0.4.0 muss es ausdrücklich
+eingeschaltet werden – ein öffentlicher Server soll nicht von selbst schreiben
+(Rückmeldung der Videotechnik der MBG Lemgo). `--read-only` gibt es weiter; es
+schließt die anderen Schalter aus. Der richtige Weg zum Schreiben: erst lesend,
+dann mit `--dry-run` ansehen, was geschickt würde, dann mit `--allow-write` an
+einem Testtermin bzw. **in einem Testkalender**, nicht im Produktivkalender.
 
 Was der Server in seiner Stufe nicht darf, bietet er gar nicht erst an. Das
 gilt auch für die allgemeinen Werkzeuge (`ct_api_get`, `ct_api_write`): Ein
@@ -66,14 +78,15 @@ Zusätzlich zu den Rechten der Person gilt ein zweiter Zaun, in jeder Stufe
 | Zustimmungen für jemand anderen (Datenschutzerklärung, Verschwiegenheitserklärung) | |
 
 Personen zusammenführen zählt als Löschen – der Doppelgänger verschwindet –
-und geht nur mit `--allow-delete`. Geprüft wird jeder Pfad Segment für
+und geht nur mit `--allow-delete`. Einen **ganzen Ablaufplan ersetzen**
+(`PUT /events/{id}/agenda`) geht über den allgemeinen Weg nie; mehr dazu unten. Geprüft wird jeder Pfad Segment für
 Segment; verschlüsselte Punkte und Schrägstriche, ganze Adressen statt Pfaden
 und `..` werden abgelehnt, bevor etwas zu ChurchTools geht.
 
 ## Einrichten
 
 ```bash
-npm install -g github:psalmio-app/psalmio-client#v0.3.0
+npm install -g github:psalmio-app/psalmio-client#v0.4.0
 ```
 
 | Umgebung | Option | Bedeutung |
@@ -111,8 +124,9 @@ Windows: `%APPDATA%\Claude\`) – hier neben dem Psalmio-Server:
 }
 ```
 
-Nur lesen: `"args": ["churchtools-mcp", "--read-only"]`. Ohne globale
-Installation: `"command": "npx", "args": ["-y", "github:psalmio-app/psalmio-client#v0.3.0", "churchtools-mcp"]`.
+So liest der Server nur. Probemodus: `"args": ["churchtools-mcp", "--dry-run"]`;
+schreiben: `"args": ["churchtools-mcp", "--allow-write"]`. Ohne globale
+Installation: `"command": "npx", "args": ["-y", "github:psalmio-app/psalmio-client#v0.4.0", "churchtools-mcp"]`.
 
 ### Claude Code
 
@@ -124,13 +138,14 @@ claude mcp add churchtools --env CHURCHTOOLS_URL=https://gemeinde.church.tools -
 
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}' \
-  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ct_check_connection","arguments":{}}}' | psalmio churchtools-mcp --read-only
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ct_check_connection","arguments":{}}}' | psalmio churchtools-mcp
 ```
 
 Die zweite Antwort nennt die Person hinter dem Token, die Fassung des
 ChurchTools und was der Server darf. Ohne Adresse oder Token, mit einer
 http-Adresse, einer unbekannten Zeitzone oder `--read-only` zusammen mit
-`--allow-delete` endet er sofort mit Rückgabewert 64.
+`--allow-write`, `--allow-delete` oder `--dry-run` endet er sofort mit
+Rückgabewert 64.
 
 ## Die Werkzeuge
 
@@ -178,8 +193,25 @@ ersten Bedarf einmal.
 
 ## Einen Ablaufplan anlegen
 
-Der Assistent sucht den Termin (`ct_list_events`) und die Lieder
-(`ct_search_songs`) und legt den Plan mit `ct_create_agenda` in einem Zug an:
+**Vorsicht, aus Erfahrung:** Der Schreibweg für einen ganzen Ablaufplan
+(`PUT /events/{id}/agenda`) ersetzt in ChurchTools den kompletten Plan. Bei einer
+Messung der MBG Lemgo im August 2026 verschwanden dabei sechs Lieder. Ein
+Assistent könnte so einen fertig geplanten Gottesdienst überschreiben, und es
+fiele erst am Sonntag auf. Deshalb:
+
+- `ct_create_agenda` legt einen Plan nur an, wenn der Termin **noch keinen** hat
+  – sonst ändert sich nichts.
+- Einzelne Einträge ergänzt, ändert und verschiebt der Server über die Wege für
+  einzelne Einträge (`POST`/`PUT /events/{id}/agenda/items`), die die
+  API-Beschreibung von ChurchTools 3.137 anbietet – nie über den ganzen Plan.
+- Über `ct_api_write` ist `PUT /events/{id}/agenda` gesperrt.
+- Ohne `--allow-write` schreibt der Assistent gar nicht; er liest den Ablauf und
+  gibt eine saubere Struktur zurück, die ein Mensch einträgt. Für eine Hochzeit
+  reicht das meistens.
+
+Mit `--allow-write` sucht der Assistent den Termin (`ct_list_events`) und die
+Lieder (`ct_search_songs`) und legt den Plan mit `ct_create_agenda` in einem Zug
+an:
 
 ```json
 {
@@ -216,6 +248,23 @@ beim ersten Fehler ab – mit der Angabe, wie viele schon angelegt sind.
 `ct_update_agenda_item` ändert nur, was genannt wird; der Rest des Eintrags
 bleibt, wie er ist.
 
+## Probemodus
+
+Mit `--dry-run` bietet der Server die schreibenden Werkzeuge an, schickt aber
+nichts. Jedes Werkzeug prüft und liest wie sonst – ob der Termin schon einen
+Plan hat, welche Einträge es gibt – und antwortet dann mit der Liste dessen, was
+es geschickt hätte:
+
+```
+PROBEMODUS – nichts an ChurchTools gesendet. Dieser Aufruf hätte 1 Änderung(en) geschickt:
+1. PUT /events/13/agenda
+   {"calendarId":2,"items":[{"type":"text","title":"Begrüßung","duration":300}, …]}
+```
+
+Lehnt eine Prüfung ab („hat schon einen Ablaufplan“), kommt die Ablehnung wie
+sonst. So lässt sich an echten Daten sehen, was der Assistent tun würde, ohne
+dass sich etwas ändert.
+
 ## Zeiten
 
 ChurchTools rechnet in Zulu-Zeit (UTC), Menschen in ihrer Ortszeit. Eingaben
@@ -247,8 +296,8 @@ Auftragsverarbeitung mit dem Anbieter gehört dazu.
   einen Nachbau (`test/churchtools.test.js`), dessen Antworten dieser
   Beschreibung und dem folgen, was Psalmio seit Monaten aus einem echten
   ChurchTools liest. Gegen ein echtes ChurchTools mit Token ist er noch nicht
-  gelaufen: Beim ersten Mal mit `--read-only` beginnen und den ersten
-  Ablaufplan an einem Testtermin anlegen.
+  gelaufen: Beim ersten Mal lesend beginnen, dann mit `--dry-run`, und den
+  ersten Ablaufplan an einem Testtermin in einem Testkalender anlegen.
 - Serientermine und Raumbuchungen nur über `ct_api_describe` und `ct_api_write`.
 - Notizen für Dienstgruppen entfernen geht nur über `ct_api_write` (DELETE,
   mit `--allow-delete`).

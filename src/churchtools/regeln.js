@@ -13,6 +13,10 @@
  *  - Zustimmungen (Datenschutzerklärung, Verschwiegenheit): nie für jemanden schreiben.
  *  - Löschen – und was dem gleichkommt (Personen zusammenführen) – nur, wenn
  *    der Server ausdrücklich mit `--allow-delete` gestartet wurde.
+ *  - Einen ganzen Ablaufplan ersetzen (`PUT /events/{id}/agenda`) nie über den
+ *    allgemeinen Weg: ChurchTools ersetzt den Plan dabei als Ganzes, und bei
+ *    einer Messung der MBG Lemgo im August 2026 verschwanden sechs Lieder.
+ *    Anlegen geht nur über `ct_create_agenda`, und nur ohne vorhandenen Plan.
  *
  * Geprüft wird der Pfad, nicht die Absicht: jedes Segment zählt, an jeder Stelle.
  */
@@ -89,6 +93,9 @@ function verboten(methode, segmente, modus) {
   if (NUR_LESEN.has(segmente[0])) return `Im Bereich „${segmente[0]}“ (Rechte, Einstellungen, Automatisierungen, Massenversand) wird nur gelesen`;
   const zustimmung = segmente.find((s) => NIE_SCHREIBEN.has(s));
   if (zustimmung) return `„${zustimmung}“ ist eine Zustimmung, die eine Person selbst gibt – ein Assistent schreibt sie nicht`;
+  if (m === 'PUT' && segmente.length === 3 && segmente[0] === 'events' && segmente[2] === 'agenda') {
+    return 'Den ganzen Ablaufplan ersetzt ChurchTools nur als Ganzes – dabei gehen Einträge verloren. Anlegen: ct_create_agenda (nur ohne vorhandenen Plan), ergänzen: ct_add_agenda_items, ändern: ct_update_agenda_item';
+  }
   const wieLoeschen = m === 'DELETE' || segmente.some((s) => WIE_LOESCHEN.has(s));
   if (wieLoeschen && STUFEN[modus] < STUFEN.loeschen) return 'Löschen ist nur möglich, wenn der Server mit --allow-delete gestartet wurde';
   return null;

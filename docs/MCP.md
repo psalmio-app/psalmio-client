@@ -43,7 +43,7 @@ Argument (Argumente stehen für jeden Benutzer des Rechners in der
 Prozessliste). Statt `PSALMIO_API_KEY` geht auch `--key-file <datei>`.
 
 ```bash
-npm install -g github:psalmio-app/psalmio-client#v0.3.0   # oder eine neuere Fassung
+npm install -g github:psalmio-app/psalmio-client#v0.4.0   # oder eine neuere Fassung
 ```
 
 ### Claude Desktop
@@ -66,7 +66,7 @@ Windows: `%APPDATA%\Claude\`):
 }
 ```
 
-Ohne globale Installation: `"command": "npx", "args": ["-y", "github:psalmio-app/psalmio-client#v0.3.0", "mcp"]`.
+Ohne globale Installation: `"command": "npx", "args": ["-y", "github:psalmio-app/psalmio-client#v0.4.0", "mcp"]`.
 
 ### Claude Code
 
