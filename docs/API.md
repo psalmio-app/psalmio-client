@@ -37,6 +37,9 @@ nicht – nicht: Der Termin fehlt.
 | 422 | `TIMESTAMP_IN_FUTURE` | mehr als 5 Minuten in der Zukunft | Uhr prüfen |
 | 422 | `TIMESTAMP_TOO_OLD` | außerhalb des Termintags ± 12 h (Europe/Berlin) | – |
 | 422 | `OFFSET_TOO_LARGE` | Aufnahmebeginn weicht mehr als 3 h vom Start ab | – |
+| 409 | `EVENT_NOT_STARTED` | Pause/Weiter, bevor der Termin gestartet ist | erst `start` senden |
+| 409 | `EVENT_FINISHED` | Pause/Weiter, nachdem der Termin abgeschlossen ist | – |
+| 422 | `TIMESTAMP_BEFORE_START` | `at` liegt vor dem Start der Aufnahme | Uhr prüfen |
 | 401 / 403 | – | Key fehlt, ist ungültig oder hat die Berechtigung nicht | Einrichtung prüfen |
 
 ## Endpunkte
@@ -50,7 +53,9 @@ bei dieser Gemeinde ansteht. Für Massen-Uploads: erst weiterladen, wenn `idle`.
 Der Server verarbeitet nacheinander; wer schneller hochlädt, stapelt nur Arbeit.
 
 ### `GET /events/{event_id}`
-`data: { event_id, title, event_date, location, event_start_timestamp, processed, audio_processing_complete }`
+`data: { event_id, title, event_date, location, event_start_timestamp, processed, audio_processing_complete, pause_running }`
+
+`pause_running` (seit 0.5.0): Gerade läuft eine Pause – fürs Steuerpult, das „Pause“ oder „Weiter“ anbietet.
 
 ### `POST /events/{event_id}/start`
 ```json
@@ -66,6 +71,33 @@ der Aufruf abgeschickt wird. Alle Zeiten im Ablauf zählen ab dort.
 
 Kennt Psalmio den Termin noch nicht, holt es ihn bei diesem Aufruf selbst aus
 ChurchTools (ebenso bei `upload-url`, `complete` und `multipart/start`).
+
+### `POST /events/{event_id}/pause`
+```json
+{ "at": 1789894200 }
+```
+Eine Pause beginnt: Die Aufnahme läuft weiter (Nachfeier, Glaubenskurs), Psalmio
+schneidet die Pause bei der Freigabe aus Ton und Bild. `at` ist optional
+(Unix-Sekunden, wie `started_at`); ohne gilt der Augenblick, in dem Psalmio den
+Aufruf erhält.
+
+- Läuft gerade ein Beitrag, endet er im selben Augenblick – `ended_item` nennt ihn.
+- Läuft schon eine Pause, bleibt sie, und die Antwort trägt `already_paused: true`
+  – ein Erfolg, kein Konflikt. Zweimal drücken schadet nicht.
+- Die Pause kommt im Ablauf hinter den letzten gestempelten Programmpunkt;
+  liegt `at` vor dessen Marke, beginnt sie an der Marke.
+
+`data: { event_id, pause_running, pause_started_at, pause_ended_at, ended_item, already_paused }`
+(Zeiten als Unix-Sekunden). Seit 0.5.0.
+
+### `POST /events/{event_id}/resume`
+```json
+{ "at": 1789897800 }
+```
+„Weiter“: Die laufende Pause endet. `at` wie oben. Läuft keine, trägt die Antwort
+`not_paused: true` – ebenfalls ein Erfolg.
+
+`data: { event_id, pause_running, pause_started_at, pause_ended_at, ended_item, not_paused }`. Seit 0.5.0.
 
 ### Aufnahme hochladen – einzelner PUT (bis 5 GB)
 

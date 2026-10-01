@@ -161,6 +161,22 @@ function startEvent(config, eventId, startedAt, deps) {
   return call(config, 'post', eventPath(eventId, '/start'), { started_at: startedAt, source: 'recording' }, deps);
 }
 
+/**
+ * Pause beginnen – die Aufnahme läuft weiter, Psalmio schneidet die Pause bei der
+ * Freigabe heraus. `at` in Unix-Sekunden; ohne Angabe gilt der Augenblick, in dem
+ * Psalmio den Aufruf erhält. Läuft gerade ein Beitrag, endet er im selben
+ * Augenblick (`ended_item`). Lief schon eine Pause, sagt Psalmio das über
+ * `already_paused`; das ist ein Erfolg, kein Konflikt.
+ */
+function pauseEvent(config, eventId, at, deps) {
+  return call(config, 'post', eventPath(eventId, '/pause'), at == null ? {} : { at }, deps);
+}
+
+/** „Weiter“: Die laufende Pause endet. Lief keine, sagt Psalmio das über `not_paused` – ebenfalls ein Erfolg. */
+function resumeEvent(config, eventId, at, deps) {
+  return call(config, 'post', eventPath(eventId, '/resume'), at == null ? {} : { at }, deps);
+}
+
 /** Einzelner PUT (bis 5 GB): Upload-Adresse anfordern. */
 function requestUpload(config, eventId, { fileSize, fileName }, deps) {
   return call(config, 'post', eventPath(eventId, '/recording/upload-url'), { file_size: fileSize, file_name: fileName }, deps);
@@ -210,6 +226,8 @@ module.exports = {
   getQueue,
   getEvent,
   startEvent,
+  pauseEvent,
+  resumeEvent,
   requestUpload,
   completeUpload,
   startMultipart,

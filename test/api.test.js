@@ -76,6 +76,26 @@ test('Erfolg: die Nutzlast kommt ausgepackt zurück, der Key geht als Header mit
   });
 });
 
+test('Pause und Weiter: eigener Pfad, Zeitpunkt nur, wenn einer angegeben ist', async () => {
+  const gesehen = [];
+  await withServer(async (req, res) => {
+    gesehen.push({ url: req.url, body: JSON.parse((await readBody(req)).toString() || 'null') });
+    json(res, 200, { success: true, data: { pause_running: req.url.endsWith('/pause') } });
+  }, async (_url, origin) => {
+    const config = { baseUrl: origin, apiKey: 'sk-test' };
+    assert.equal((await client.pauseEvent(config, '77', 1790000000)).data.pause_running, true);
+    await client.pauseEvent(config, '77');
+    assert.equal((await client.resumeEvent(config, '77', 1790000600)).data.pause_running, false);
+    await client.resumeEvent(config, '77');
+  });
+  assert.deepEqual(gesehen, [
+    { url: `${client.API_PREFIX}/events/77/pause`, body: { at: 1790000000 } },
+    { url: `${client.API_PREFIX}/events/77/pause`, body: {} },
+    { url: `${client.API_PREFIX}/events/77/resume`, body: { at: 1790000600 } },
+    { url: `${client.API_PREFIX}/events/77/resume`, body: {} },
+  ]);
+});
+
 test('Umleitungen wird NICHT gefolgt – der API-Key käme sonst beim neuen Host an', async () => {
   let fremderHostGefragt = false;
   const fremd = http.createServer((req, res) => { fremderHostGefragt = true; res.end('{}'); });

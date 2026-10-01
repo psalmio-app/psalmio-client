@@ -26,6 +26,7 @@ macht Psalmio.
 
 ```
 Aufnahme beginnt  →  psalmio start <termin>
+Unterbrechung     →  psalmio pause <termin>   …   psalmio weiter <termin>
 Aufnahme fertig   →  psalmio upload aufnahme.mp4 --event <termin>
 ```
 
@@ -49,6 +50,8 @@ Psalmio ihn noch nicht, holt es ihn beim ersten Aufruf selbst aus ChurchTools.
 psalmio status
 psalmio event 7944
 psalmio start 7944 --at 2026-09-20T10:00:00+02:00
+psalmio pause 7944        # Unterbrechung: die Aufnahme läuft weiter, ein laufender Beitrag endet
+psalmio weiter 7944       # es geht weiter – beides auch mit --at <zeit>
 psalmio upload aufnahme.mp4 --event 7944 --started-at 2026-09-20T09:58:30+02:00
 psalmio upload aufnahme.mp4 --event 7944 --resume   # nach einem Abbruch: derselbe Befehl, mit --resume
 ```
@@ -267,7 +270,7 @@ automatisch die neueste. Wer damit live Gottesdienste steuert, will nicht, dass
 sich zwischen zwei Sonntagen etwas von selbst ändert.
 
 ```bash
-npm install github:psalmio-app/psalmio-client#v0.4.0
+npm install github:psalmio-app/psalmio-client#v0.5.0
 ```
 
 ## Entwicklung

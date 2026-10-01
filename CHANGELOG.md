@@ -1,5 +1,19 @@
 # Änderungen
 
+## 0.5.0 – 01.10.2026
+
+Auf Wunsch von Tim Fast (Videotechnik der MBG Lemgo): Bei Nachfeiern arbeitet die
+Regie im Steuerpult und hat Psalmio nicht immer offen.
+
+- **Neu: `psalmio pause <termin>` und `psalmio weiter <termin>`** (Bibliothek:
+  `pauseEvent`, `resumeEvent`), beide wahlweise mit `--at <zeit>`. Die Aufnahme
+  läuft weiter, Psalmio schneidet die Pause bei der Freigabe heraus. Läuft gerade
+  ein Beitrag, endet er mit der Pause; zweimal drücken schadet nicht
+  (`already_paused`, `not_paused`).
+- `GET /events/{id}` (`psalmio event`) meldet `pause_running`.
+- Braucht Psalmio vom 01.10.2026 oder neuer; ältere Fassungen antworten auf die
+  neuen Pfade mit 404 ohne `error_code` (`isUnknownEndpoint`).
+
 ## 0.4.0 – 30.09.2026
 
 Aus der Rückmeldung von Tim Fast (Videotechnik der MBG Lemgo) zu 0.3.0:

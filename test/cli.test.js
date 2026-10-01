@@ -54,6 +54,14 @@ async function mitPsalmio(steuerung, run) {
       return { upload_id: uploadId, part_size: PART, part_count: anzahl, urls, expires_in: 21600 };
     };
 
+    if (/^\/events\/[^/]+\/pause$/.test(pfad)) {
+      z.pause = body;
+      return json(200, { data: steuerung.pause ?? { pause_running: true, already_paused: false, ended_item: null } });
+    }
+    if (/^\/events\/[^/]+\/resume$/.test(pfad)) {
+      z.weiter = body;
+      return json(200, { data: steuerung.weiter ?? { pause_running: false, not_paused: false } });
+    }
     if (pfad.endsWith('/start') && !pfad.includes('/multipart/')) {
       z.gestartet = body.started_at;
       return json(200, { data: { already_started: false } });
@@ -305,5 +313,41 @@ test('gültige Zeiten gehen durch: Unix-Sekunden und ISO-Zeit mit Zone', async (
     lauf = await psalmio(origin, ['start', '9', '--at', '1790000000']);
     assert.equal(lauf.code, 0, lauf.err);
     assert.equal(z.gestartet, 1790000000);
+  });
+});
+
+
+test('pause und weiter: ohne --at entscheidet Psalmio den Augenblick, mit --at gilt die Zeit', async () => {
+  await mitPsalmio({ pause: { pause_running: true, already_paused: false, ended_item: 'Vortrag' } }, async (origin, z) => {
+    let lauf = await psalmio(origin, ['pause', '9']);
+    assert.equal(lauf.code, 0, lauf.err);
+    assert.deepEqual(z.pause, {});
+    assert.match(lauf.out, /Pause läuft\. „Vortrag" ist damit beendet\./);
+
+    lauf = await psalmio(origin, ['weiter', '9', '--at', '1790000000']);
+    assert.equal(lauf.code, 0, lauf.err);
+    assert.deepEqual(z.weiter, { at: 1790000000 });
+    assert.match(lauf.out, /Pause beendet/);
+  });
+});
+
+test('pause und weiter zweimal: ein Erfolg ohne Wirkung, keine Fehlermeldung', async () => {
+  await mitPsalmio({ pause: { already_paused: true }, weiter: { not_paused: true } }, async (origin) => {
+    const pause = await psalmio(origin, ['pause', '9']);
+    const weiter = await psalmio(origin, ['weiter', '9']);
+    assert.equal(pause.code, 0, pause.err);
+    assert.match(pause.out, /schon eine Pause/);
+    assert.equal(weiter.code, 0, weiter.err);
+    assert.match(weiter.out, /keine Pause/);
+  });
+});
+
+test('pause und weiter kennen nur --at', async () => {
+  await mitPsalmio({}, async (origin, z) => {
+    for (const args of [['pause', '9', '--event', '3'], ['weiter', '9', '--resume'], ['pause']]) {
+      const lauf = await psalmio(origin, args);
+      assert.equal(lauf.code, 64, `${args.join(' ')} → ${lauf.code}: ${lauf.err}`);
+    }
+    assert.equal(z.anfragen.length, 0);
   });
 });

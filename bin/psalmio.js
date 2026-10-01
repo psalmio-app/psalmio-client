@@ -30,6 +30,8 @@ const HILFE = `psalmio – Aufnahmen und Startzeitpunkte nach Psalmio bringen
   psalmio status
   psalmio event <termin-id>
   psalmio start <termin-id> [--at <unix-sekunden|ISO-zeit>]
+  psalmio pause <termin-id> [--at <zeit>]     Pause beginnt, die Aufnahme läuft weiter
+  psalmio weiter <termin-id> [--at <zeit>]    die Pause endet
   psalmio upload <datei> --event <termin-id> [--started-at <zeit>] [--resume] [--state <datei>]
   psalmio batch <manifest.tsv> [--window 22:00-06:00] [--window-tz Europe/Berlin]
                                [--state <datei>] [--dry-run]
@@ -94,6 +96,8 @@ const OPTIONEN = new Map([
   ['status', new Set(FUER_ALLE)],
   ['event', new Set(FUER_ALLE)],
   ['start', new Set([...FUER_ALLE, 'at'])],
+  ['pause', new Set([...FUER_ALLE, 'at'])],
+  ['weiter', new Set([...FUER_ALLE, 'at'])],
   ['upload', new Set([...FUER_ALLE, 'event', 'started-at', 'resume', 'state'])],
   ['batch', new Set([...FUER_ALLE, 'window', 'window-tz', 'state', 'dry-run', 'root-from', 'root-to'])],
   // Kein --json: Auf stdout geht dort nur JSON-RPC
@@ -241,6 +245,19 @@ async function main() {
     const at = zeitpunkt(flags.at) ?? Math.floor(Date.now() / 1000);
     return ende(await client.startEvent(config, erstes, at), flags, (r) =>
       r.data?.already_started ? 'Der Termin lief schon – nichts geändert.' : 'Termin gestartet.');
+  }
+  if (befehl === 'pause' && erstes) {
+    genau(positional, 2);
+    return ende(await client.pauseEvent(config, erstes, zeitpunkt(flags.at)), flags, (r) => {
+      if (r.data?.already_paused) return 'Es lief schon eine Pause – nichts geändert.';
+      const beendet = r.data?.ended_item ? ` „${r.data.ended_item}" ist damit beendet.` : '';
+      return `Pause läuft.${beendet}`;
+    });
+  }
+  if (befehl === 'weiter' && erstes) {
+    genau(positional, 2);
+    return ende(await client.resumeEvent(config, erstes, zeitpunkt(flags.at)), flags, (r) =>
+      r.data?.not_paused ? 'Es lief keine Pause – nichts geändert.' : 'Pause beendet, es geht weiter.');
   }
   if (befehl === 'upload' && erstes && flags.event) {
     genau(positional, 2);
