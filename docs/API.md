@@ -53,9 +53,16 @@ bei dieser Gemeinde ansteht. Für Massen-Uploads: erst weiterladen, wenn `idle`.
 Der Server verarbeitet nacheinander; wer schneller hochlädt, stapelt nur Arbeit.
 
 ### `GET /events/{event_id}`
-`data: { event_id, title, event_date, location, event_start_timestamp, processed, audio_processing_complete, pause_running }`
+`data: { event_id, title, event_date, location, event_start_timestamp, processed, audio_processing_complete, pause_running, processing_status, processing_error }`
 
 `pause_running` (seit 0.5.0): Gerade läuft eine Pause – fürs Steuerpult, das „Pause“ oder „Weiter“ anbietet.
+
+`processing_status` (Server seit 08.10.2026, jede Version des Clients reicht es durch): Stand der
+Ton- und Bildverarbeitung – `none` (noch nichts verarbeitet), `pending`, `running`, `completed`,
+`failed` oder `cancelled`. Wartet oder läuft etwas, gilt das, sonst der jüngste Lauf.
+`processing_error`: der Grund, wenn `failed`. Für Massen-Uploads: `failed` heißt, die Aufnahme liegt
+bei Psalmio, ihre Verarbeitung ist aber gescheitert – nicht noch einmal hochladen, sondern melden.
+Abgerissene Verbindungen zum Speicher wiederholt Psalmio selbst.
 
 ### `POST /events/{event_id}/start`
 ```json
